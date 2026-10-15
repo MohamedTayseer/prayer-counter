@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Reem+Kufi:wght@500;700&family=IBM+Plex+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 
@@ -40,6 +40,13 @@
       <span class="hint">أقل</span>
     </div>
     <p class="hint" id="sensText"></p>
+    <span class="set-label">التنبيه عند التشهد</span>
+    <div class="places alerts" id="alertButtons">
+      <button class="place alert-opt" data-alert="voice" aria-pressed="true">كلام</button>
+      <button class="place alert-opt" data-alert="tone" aria-pressed="false">نغمة</button>
+      <button class="place alert-opt" data-alert="off" aria-pressed="false">من غير صوت</button>
+    </div>
+    <button class="ghost" id="testSound">جرّب الصوت</button>
   </div>
 
   <button class="link-btn" id="openHistory">السجل · الصلوات اللي فاتت</button>
@@ -111,6 +118,6 @@
 
 <div class="flash" id="flash" hidden>الله أكبر</div>
 
-<script type="module" src="app.js?v=7"></script>
+<script type="module" src="app.js?v=8"></script>
 </body>
 </html>

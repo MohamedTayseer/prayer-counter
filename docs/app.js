@@ -214,7 +214,7 @@ function advance(t) {
   app.ptr++;
   app.starts[app.ptr] = t;
   const s = app.steps[app.ptr];
-  if (s.tone) beep(s.tone);
+  if (s.tone) cue(s.tone);
   if (s.last) Object.assign(sal, { side: 0, since: t, first: 0, firstAt: 0 });
   renderLive(true);
 }
@@ -239,25 +239,74 @@ function salamCheck(seen, yaw, t) {
   else if (t - sal.firstAt < 20000) finish(t, "salam");
 }
 
-// ---------- sound ----------
+// ---------- sound: spoken words (built into the phone, no internet) or a tone ----------
+const ALERT_KEY = "prayerCounter.alert";
+const ALERTS = { voice: "كلام", tone: "نغمة", off: "من غير صوت" };
+const CUE_WORDS = { 1: "التشهد الأوسط", 2: "التشهد الأخير" };
+settings.alert = ALERTS[load(ALERT_KEY, "voice")] ? load(ALERT_KEY, "voice") : "voice";
+
 let actx = null;
+let arVoice = null;
+function pickVoice() {
+  try {
+    const voices = speechSynthesis.getVoices();
+    arVoice = voices.find((v) => v.lang?.toLowerCase().startsWith("ar")) || null;
+  } catch { arVoice = null; }
+}
+try { pickVoice(); speechSynthesis.addEventListener?.("voiceschanged", pickVoice); } catch { /* no speech */ }
+
+// Must run inside a tap: phones only allow sound that a tap started.
 function initAudio() {
+  // iPhone: treat our sound as playback, so the silent switch does not mute it
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch { /* ignore */ }
   try {
     actx = actx || new (window.AudioContext || window.webkitAudioContext)();
     actx.resume();
+    const b = actx.createBuffer(1, 1, 22050); // a silent blip unlocks the sound on iPhone
+    const src = actx.createBufferSource();
+    src.buffer = b; src.connect(actx.destination); src.start(0);
   } catch { actx = null; }
+  try {
+    const u = new SpeechSynthesisUtterance(" ");
+    u.volume = 0;
+    speechSynthesis.speak(u); // unlocks speaking later without a tap
+    pickVoice();
+  } catch { /* no speech */ }
 }
+
+// kind 1 = middle tashahhud, 2 = last tashahhud
+function cue(kind) {
+  try { navigator.vibrate?.(kind === 1 ? 180 : [180, 140, 180]); } catch { /* ignore */ }
+  if (settings.alert === "off") return;
+  if (settings.alert === "voice" && speak(CUE_WORDS[kind])) return;
+  beep(kind);
+}
+
+function speak(text) {
+  try {
+    if (!window.speechSynthesis) return false;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = arVoice?.lang || "ar-SA";
+    if (arVoice) u.voice = arVoice;
+    u.rate = 0.9;
+    u.volume = 1;
+    speechSynthesis.speak(u);
+    return true;
+  } catch { return false; }
+}
+
 function beep(count) {
-  try { navigator.vibrate?.(count === 1 ? 180 : [180, 140, 180]); } catch { /* ignore */ }
   if (!actx) return;
+  try { if (actx.state !== "running") actx.resume(); } catch { /* ignore */ } // the camera can pause the sound
   for (let i = 0; i < count; i++) {
-    const at = actx.currentTime + i * 0.42;
+    const at = actx.currentTime + 0.05 + i * 0.42;
     const o = actx.createOscillator();
     const g = actx.createGain();
     o.type = "sine";
     o.frequency.value = 720;
     g.gain.setValueAtTime(0, at);
-    g.gain.linearRampToValueAtTime(0.3, at + 0.03);
+    g.gain.linearRampToValueAtTime(0.35, at + 0.03);
     g.gain.exponentialRampToValueAtTime(0.001, at + 0.32);
     o.connect(g).connect(actx.destination);
     o.start(at);
@@ -656,6 +705,22 @@ $("placeButtons").addEventListener("click", (e) => {
   showPlace();
 });
 $("startNow").addEventListener("click", () => startPrayer(now()));
+function showAlert() {
+  for (const b of document.querySelectorAll(".alert-opt")) b.setAttribute("aria-pressed", String(b.dataset.alert === settings.alert));
+}
+$("alertButtons").addEventListener("click", (e) => {
+  const b = e.target.closest(".alert-opt");
+  if (!b) return;
+  settings.alert = b.dataset.alert;
+  save(ALERT_KEY, settings.alert);
+  showAlert();
+});
+$("testSound").addEventListener("click", () => {
+  initAudio();
+  if (settings.alert === "off") return;
+  setTimeout(() => cue(1), 150);
+});
+showAlert();
 for (const id of ["chip", "thumb", "camWrap"]) $(id).addEventListener("click", () => setDiagVisible(!document.body.classList.contains("show-diag")));
 setDiagVisible(Boolean(load(DIAG_KEY, false)));
 

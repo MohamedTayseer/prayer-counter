@@ -169,3 +169,4 @@ body.show-diag .diag { display: block; }
 .avg-list { flex: none; overflow: visible; padding-top: 0; }
 .rk-row.avg { grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 1.2fr); }
 .rk-name small { font: 400 .8rem var(--f-body); }
+.places.alerts { grid-template-columns: repeat(3, 1fr); }
