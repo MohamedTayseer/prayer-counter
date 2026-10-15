@@ -8,7 +8,7 @@
 // After the last tashahhud, turning the head right then left (the salam) ends the prayer.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 5;
+const APP_VERSION = 6;
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -383,7 +383,7 @@ const rec = {
 
 // Is the hand detector needed on this frame? Everywhere except the last tashahhud.
 function wantHands() {
-  if (app.mode === "takbeer") return true;
+  if (app.mode === "takbeer" || app.mode === "calib" || app.mode === "check") return true;
   return app.mode === "pray" && !app.steps[app.ptr]?.last;
 }
 
@@ -700,7 +700,7 @@ function showDiag(force) {
 // ---------- camera + face detection ----------
 let detector = null;
 let handDetector = null; // optional: without it the middle tashahhud ends at the ruku lean
-let handTick = 0, lastHandsUp = false;
+let handTick = 0, lastHandsUp = false, lastHandCount = 0;
 let stream = null;
 let loopOn = false;
 let lastVideoTime = -1;
@@ -786,7 +786,7 @@ function frame() {
   const video = $("video");
   if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
-    let w = null, yaw = 0, box = null, handsUp = false, pos = null;
+    let w = null, yaw = 0, box = null, handsUp = false, pos = null, handRes = null;
     const t = Date.now();
     try {
       const res = detector.detectForVideo(video, performance.now());
@@ -811,14 +811,17 @@ function frame() {
       if (handDetector && wantHands()) {
         // during the prayer every other frame (about 7 a second) is enough for a raise, and saves battery
         if (app.mode !== "pray" || (handTick++ & 1) === 0) {
-          lastHandsUp = handsRaised(handDetector.detectForVideo(video, performance.now()), box, video);
+          handRes = handDetector.detectForVideo(video, performance.now());
+          lastHandsUp = handsRaised(handRes, box, video);
+          lastHandCount = handRes?.landmarks?.length || 0;
         }
         handsUp = lastHandsUp;
         if (handsUp) diag.handsUp++;
-      } else lastHandsUp = false;
+      } else { lastHandsUp = false; lastHandCount = 0; }
     } catch (e) { diag.err = String(e?.message || e); }
     showDiag();
-    if (app.mode === "calib" || app.mode === "takbeer") drawBox(box, video);
+    if (app.mode === "calib" || app.mode === "takbeer" || app.mode === "check") drawOverlay(box, handRes, video, handsUp);
+    if (app.mode === "check") checkStep(w, handsUp, lastHandCount, t);
     onObservation(w, yaw, t, handsUp, pos);
     if (app.mode === "pray") renderMeter();
   }
@@ -853,16 +856,49 @@ function pickFace(list) {
   return list.reduce((a, b) => (b.boundingBox.width > a.boundingBox.width ? b : a));
 }
 
-function drawBox(box, video) {
+// The camera picture gets a box around the face and a dot on each joint of each hand seen.
+// The dots turn green when both hands are up as for a takbeer.
+function drawOverlay(box, handRes, video, bothUp) {
   const c = $("overlay");
   const ctx = c.getContext("2d");
   c.width = video.videoWidth || 640;
   c.height = video.videoHeight || 480;
   ctx.clearRect(0, 0, c.width, c.height);
-  if (!box) return;
-  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--lamp").trim() || "#d6b26b";
-  ctx.lineWidth = 4;
-  ctx.strokeRect(box.originX, box.originY, box.width, box.height);
+  const css = getComputedStyle(document.documentElement);
+  const color = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
+  if (box) {
+    ctx.strokeStyle = color("--lamp", "#d6b26b");
+    ctx.lineWidth = 4;
+    ctx.strokeRect(box.originX, box.originY, box.width, box.height);
+  }
+  const r = Math.max(4, c.width / 110);
+  ctx.fillStyle = bothUp ? color("--ok", "#74c095") : color("--text", "#e6ede9");
+  for (const pts of handRes?.landmarks || []) {
+    for (const p of pts) {
+      ctx.beginPath();
+      ctx.arc(p.x * c.width, p.y * c.height, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+// Placement check: says what the camera sees, so the phone can be moved until the face and both
+// raised hands fit in the picture. Raising the hands here does not start a prayer.
+const placeCheck = { goodUntil: 0 };
+function checkStep(w, bothUp, handCount, t) {
+  const msg = $("calibMsg");
+  if (bothUp) placeCheck.goodUntil = t + 1500; // keep the good news on screen a moment
+  let text;
+  if (t < placeCheck.goodUntil) text = "شايف إيديك الاتنين ✓ المكان ده مظبوط";
+  else if (w == null) text = "مش شايف وشك. حط الموبايل قدامك وبص له.";
+  else if (w < 0.07) text = "وشك صغير أوي. قرّب الموبايل شوية.";
+  else if (diag.hands === "loading") text = "شايف وشك ✓ ثانية، أداة الإيد بتتحمّل…";
+  else if (diag.hands === "off") text = "شايف وشك ✓ بس أداة الإيد مش شغالة على الموبايل ده.";
+  else if (handCount === 1) text = "شايف إيد واحدة بس. ابعد الموبايل شوية علشان الإيدين يبانوا.";
+  else if (handCount >= 2) text = "شايف إيديك. ارفعهم جنب وشك زي التكبير.";
+  else text = "شايف وشك ✓ ارفع إيديك الاتنين زي التكبير.";
+  msg.textContent = text;
+  msg.classList.toggle("good", t < placeCheck.goodUntil);
 }
 
 // ---------- screens ----------
@@ -880,7 +916,28 @@ async function choosePrayer(key) {
   $("calibMsg").textContent = "بنشغّل الكاميرا…";
   $("calibHint").textContent = POSTURES[settings.posture].hint || PLACES[settings.place].hint;
   $("calibBar").style.width = "0%";
+  $("calibBar").parentElement.hidden = false;
+  $("calibMsg").classList.remove("good");
   $("startNow").hidden = true;
+  $("calibCancel").textContent = "إلغاء";
+  show("calib");
+  if (SIM) { $("calibMsg").textContent = "وضع التجربة: مفيش كاميرا"; return; }
+  const ok = await startCamera();
+  if (!ok) app.mode = "home";
+}
+
+async function startPlacementCheck() {
+  keepAwake();
+  resetTracking();
+  app.mode = "check";
+  placeCheck.goodUntil = 0;
+  $("calibTitle").textContent = "اختبار مكان الموبايل";
+  $("calibMsg").textContent = "بنشغّل الكاميرا…";
+  $("calibMsg").classList.remove("good");
+  $("calibHint").textContent = POSTURES[settings.posture].hint || PLACES[settings.place].hint;
+  $("calibBar").parentElement.hidden = true;
+  $("startNow").hidden = true;
+  $("calibCancel").textContent = "رجوع";
   show("calib");
   if (SIM) { $("calibMsg").textContent = "وضع التجربة: مفيش كاميرا"; return; }
   const ok = await startCamera();
@@ -1173,6 +1230,7 @@ $("rCopy").addEventListener("click", () => {
 });
 $("btnStop").addEventListener("click", () => finish(now(), "button"));
 $("openHistory").addEventListener("click", showHistory);
+$("checkPlace").addEventListener("click", startPlacementCheck);
 $("rHistory").addEventListener("click", showHistory);
 $("rHome").addEventListener("click", () => { app.mode = "home"; show("home"); });
 $("hHome").addEventListener("click", () => { app.mode = "home"; show("home"); });
@@ -1186,5 +1244,7 @@ if (SIM) {
     state: () => ({ mode: app.mode, ptr: app.ptr, step: app.steps[app.ptr]?.label, group: app.steps[app.ptr]?.g, pose: det.pose, valley: det.valley, peak: det.peak }),
     history: () => load(HIST_KEY, []),
     handsRaised: (res, box, video) => handsRaised(res, box, video),
+    check: (w, bothUp, handCount, t) => { checkStep(w, bothUp, handCount, t); return $("calibMsg").textContent; },
+    draw: (box, handRes, video, bothUp) => drawOverlay(box, handRes, video, bothUp),
   };
 }

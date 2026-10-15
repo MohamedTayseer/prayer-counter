@@ -4,6 +4,13 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v6 — phone placement check
+- New button on the start screen: "اختبر مكان الموبايل وإيديك". It opens the
+  camera with a box on the face and dots on the hands, and says what it sees
+  (face too small, one hand only, both hands up ✓). Raising the hands there
+  does not start a prayer.
+- The dots also show on the camera screen before the opening takbeer.
+
 ## v5 — hand raises as checkpoints
 - A hand raise now counts only when **both hands** go up beside the face, at
   takbeer height, while upright. One hand (scratching), hands folded on the
