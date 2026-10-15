@@ -1,6 +1,8 @@
-// Prayer counter for praying seated on a chair.
-// The front camera finds the face. Leaning toward the phone makes the face bigger ("near");
-// sitting back makes it normal again ("far"). Every change moves the prayer one step on:
+// Prayer counter for praying seated on a chair, standing, or standing for the first rak'ah only.
+// The front camera finds the face. Coming toward the phone makes the face bigger ("near");
+// moving back makes it smaller ("far"). Each move is compared with the one just before it
+// (not with a fixed size), so it works standing, sitting, and when switching between them.
+// Every change moves the prayer one step on:
 // reading -> ruku -> rising -> sujood -> sitting -> sujood -> next rak'ah ... -> last tashahhud.
 // The middle tashahhud ends when the hands come up beside the face for "Allahu Akbar".
 // After the last tashahhud, turning the head right then left (the salam) ends the prayer.
@@ -23,6 +25,17 @@ const HIST_KEY = "prayerCounter.history";
 const SENS_KEY = "prayerCounter.sens";       // + ".front" / ".lap"
 const PLACE_KEY = "prayerCounter.place";
 const DIAG_KEY = "prayerCounter.diag";
+const POSTURE_KEY = "prayerCounter.posture";
+
+// How the prayer is done. Standing (and standing first) needs the phone on the floor in front
+// of the place of sujood, leaning back so it looks up at the face.
+const POSTURES = {
+  sit: { name: "قاعد على الكرسي", calib: "اقعد مستقيم وبص للموبايل" },
+  stand: { name: "واقف", calib: "اقف مستقيم وبص للموبايل",
+    hint: "حط الموبايل على الأرض قدام مكان السجود، مسنود لورا علشان يشوفك وانت واقف." },
+  mixed: { name: "أول ركعة واقف", calib: "اقف مستقيم وبص للموبايل",
+    hint: "حط الموبايل على الأرض قدام الكرسي، مسنود لورا علشان يشوفك واقف وقاعد." },
+};
 
 // Where the phone is. Each place keeps its own sensitivity: on the lap the face is closer,
 // so leaning in makes it grow faster.
@@ -36,9 +49,10 @@ const CALIB_MS = 3000;       // sit straight this long to learn the normal face 
 const NEAR_HOLD_MS = 200;    // must stay near this long to count
 const FAR_HOLD_MS = 300;     // must stay far this long to count
 const LOST_AS_NEAR_MS = 500; // face gone this long after growing = still leaning in
-const SALAM_YAW = 0.45;      // how far the head must turn for the salam
-const SALAM_HOLD_MS = 300;
-const SALAM_ARM_MS = 2000;   // salam is only watched 2 s into the last tashahhud
+const SALAM_YAW = 0.3;       // how far the head must turn for the salam
+const SALAM_LOST_YAW = 0.15; // face lost right after turning at least this far = a turn to that side
+const SALAM_HOLD_MS = 200;
+const SALAM_ARM_MS = 1000;   // salam is only watched 1 s into the last tashahhud
 const HANDS_ARM_MS = 3000;   // raised hands are only watched 3 s into the middle tashahhud
 const HANDS_HOLD_MS = 250;   // hands must stay up this long
 const FRAME_MS = 66;         // look at the camera about 15 times a second
@@ -58,9 +72,17 @@ function save(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
 }
 
-const settings = { place: PLACES[load(PLACE_KEY, "front")] ? load(PLACE_KEY, "front") : "front", sens: 1.35 };
+const settings = {
+  place: PLACES[load(PLACE_KEY, "front")] ? load(PLACE_KEY, "front") : "front",
+  posture: POSTURES[load(POSTURE_KEY, "sit")] ? load(POSTURE_KEY, "sit") : "sit",
+  sens: 1.35,
+};
+// Sensitivity is kept per setup: sitting with the phone in front, sitting with it on the lap,
+// and standing (phone on the floor).
+const sensSlot = () => (settings.posture === "sit" ? settings.place : "stand");
 function loadSens() {
-  settings.sens = Number(load(`${SENS_KEY}.${settings.place}`, settings.place === "front" ? load(SENS_KEY, 1.35) : PLACES[settings.place].sens)) || PLACES[settings.place].sens;
+  const def = settings.posture === "sit" ? PLACES[settings.place].sens : 1.35;
+  settings.sens = Number(load(`${SENS_KEY}.${sensSlot()}`, def)) || def;
 }
 loadSens();
 
@@ -92,16 +114,18 @@ const app = {
 };
 
 // ---------- face tracking state ----------
+// valley = smallest face size since the last move away (upright);
+// peak = biggest face size since the last move closer (bowed).
 const det = {
-  base: 0, ema: 0, pose: "far", cand: null, candSince: 0,
-  lastSeen: 0, lastRatio: 1, lastYaw: 0, seen: false,
+  ema: 0, pose: "far", cand: null, candSince: 0, valley: 0, peak: 0,
+  lastSeen: 0, lastSize: 0, lastYaw: 0, yawHist: [], seen: false,
   calib: [], calibStart: 0,
 };
 const sal = { side: 0, since: 0, first: 0, firstAt: 0 };
 const hands = { since: 0 };
 
 function resetTracking() {
-  Object.assign(det, { base: 0, ema: 0, pose: "far", cand: null, candSince: 0, lastSeen: 0, lastRatio: 1, lastYaw: 0, seen: false, calib: [], calibStart: 0 });
+  Object.assign(det, { ema: 0, pose: "far", cand: null, candSince: 0, valley: 0, peak: 0, lastSeen: 0, lastSize: 0, lastYaw: 0, yawHist: [], seen: false, calib: [], calibStart: 0 });
   Object.assign(sal, { side: 0, since: 0, first: 0, firstAt: 0 });
   hands.since = 0;
 }
@@ -114,29 +138,39 @@ function onObservation(w, yaw, t, handsUp = false) {
     det.lastSeen = t;
     det.ema = det.ema ? det.ema * 0.5 + w * 0.5 : w;
     det.lastYaw = yaw;
+    det.yawHist.push([t, yaw]);
+    while (det.yawHist.length && t - det.yawHist[0][0] > 700) det.yawHist.shift();
   }
   if (app.mode === "calib") return calibStep(w, t);
   if (app.mode === "takbeer") return takbeerStep(handsUp, t);
   if (app.mode !== "pray") return;
 
-  const nearT = settings.sens;
-  const farT = 1 + (nearT - 1) * 0.45;
-  const ratio = w != null ? det.ema / det.base : null;
+  const up = settings.sens;                  // closer: face this many times bigger than the valley
+  const down = 1 + (settings.sens - 1) * 0.7; // away: face this many times smaller than the peak
   let want = det.pose;
-  if (ratio != null) {
-    det.lastRatio = ratio;
-    if (ratio >= nearT) want = "near";
-    else if (ratio <= farT) want = "far";
-    // follow slow drift of the sitting position while upright
-    if (det.pose === "far" && ratio > 0.75 && ratio < farT) det.base = det.base * 0.995 + det.ema * 0.005;
-  } else if (t - det.lastSeen > LOST_AS_NEAR_MS && det.lastRatio >= 1 + (nearT - 1) * 0.5) {
+  if (w != null) {
+    const size = det.ema;
+    det.lastSize = size;
+    if (det.pose === "far") {
+      // keep the smallest upright size; follow very slowly if the person settles closer
+      det.valley = size < det.valley ? size : det.valley + (size - det.valley) * 0.002;
+      if (size >= det.valley * up) want = "near";
+    } else {
+      det.peak = Math.max(det.peak, size);
+      if (size <= det.peak / down) want = "far";
+    }
+  } else if (det.pose === "far" && t - det.lastSeen > LOST_AS_NEAR_MS && det.lastSize >= det.valley * (1 + (up - 1) * 0.5)) {
     want = "near"; // face left the picture while coming close (head bent down in sujood)
+  } else if (det.pose === "near") {
+    det.peak = Math.max(det.peak, det.lastSize * 1.25); // lost while bowed: it got even closer
   }
 
   if (want !== det.pose) {
     if (det.cand !== want) { det.cand = want; det.candSince = t; }
     else if (t - det.candSince >= (want === "near" ? NEAR_HOLD_MS : FAR_HOLD_MS)) {
       det.pose = want; det.cand = null;
+      // start the next comparison from where the move ended
+      if (want === "near") det.peak = det.lastSize; else det.valley = det.lastSize;
       onPose(want, t);
     }
   } else det.cand = null;
@@ -172,11 +206,12 @@ function calibStep(w, t) {
   const p = Math.min(1, (t - det.calibStart) / CALIB_MS);
   $("calibBar").style.width = `${Math.round(p * 100)}%`;
   const left = Math.ceil((CALIB_MS - (t - det.calibStart)) / 1000);
-  msg.textContent = left > 0 ? `اقعد مستقيم وبص للموبايل… ${ar(left)}` : "تمام";
+  msg.textContent = left > 0 ? `${POSTURES[settings.posture].calib}… ${ar(left)}` : "تمام";
   if (p >= 1 && det.calib.length >= 10) {
     const sorted = [...det.calib].sort((a, b) => a - b);
-    det.base = sorted[Math.floor(sorted.length / 2)];
-    det.ema = det.base;
+    det.valley = sorted[Math.floor(sorted.length / 2)];
+    det.ema = det.valley;
+    det.lastSize = det.valley;
     waitForTakbeer();
   }
 }
@@ -231,7 +266,11 @@ function salamCheck(seen, yaw, t) {
   if (!cur.last || t - app.starts[app.ptr] < SALAM_ARM_MS) return;
   let side = 0;
   if (seen) side = yaw > SALAM_YAW ? 1 : yaw < -SALAM_YAW ? -1 : 0;
-  else if (t - det.lastSeen > 400 && Math.abs(det.lastYaw) > SALAM_YAW * 0.6) side = Math.sign(det.lastYaw);
+  else if (t - det.lastSeen > 300) {
+    // the face tool often loses a face turned far away: use the strongest turn just before
+    const strongest = det.yawHist.reduce((a, [, y]) => (Math.abs(y) > Math.abs(a) ? y : a), 0);
+    if (Math.abs(strongest) > SALAM_LOST_YAW) side = Math.sign(strongest);
+  }
 
   if (side !== sal.side) { sal.side = side; sal.since = t; return; }
   if (side === 0 || t - sal.since < SALAM_HOLD_MS) return;
@@ -266,6 +305,13 @@ function initAudio() {
     const src = actx.createBufferSource();
     src.buffer = b; src.connect(actx.destination); src.start(0);
   } catch { actx = null; }
+  // unlock the tone players: play them silently once inside the tap
+  for (const a of tonePlayers()) {
+    try {
+      a.muted = true;
+      a.play().then(() => { a.pause(); a.currentTime = 0; a.muted = false; }).catch(() => { a.muted = false; });
+    } catch { /* ignore */ }
+  }
   try {
     const u = new SpeechSynthesisUtterance(" ");
     u.volume = 0;
@@ -296,7 +342,54 @@ function speak(text) {
   } catch { return false; }
 }
 
+// The tones are small WAV files made here (no download) and played with the normal audio
+// player, which iPhone plays reliably; the Web Audio tone below is only a fallback.
+function toneWav(count) {
+  const rate = 22050, beepLen = 0.32, gap = 0.12;
+  const total = Math.round(rate * (count * beepLen + (count - 1) * gap + 0.05));
+  const data = new Int16Array(total);
+  for (let b = 0; b < count; b++) {
+    const start = Math.round(rate * b * (beepLen + gap));
+    const len = Math.round(rate * beepLen);
+    for (let i = 0; i < len; i++) {
+      const tt = i / rate;
+      const env = Math.min(1, tt / 0.02) * Math.exp(-tt * 9); // quick rise, soft fade
+      data[start + i] = Math.round(Math.sin(2 * Math.PI * 720 * tt) * env * 0.6 * 32767);
+    }
+  }
+  const buf = new ArrayBuffer(44 + data.byteLength);
+  const v = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + data.byteLength, true); str(8, "WAVE");
+  str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, "data"); v.setUint32(40, data.byteLength, true);
+  new Int16Array(buf, 44).set(data);
+  return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+}
+let tones = null;
+function tonePlayers() {
+  if (!tones) {
+    try { tones = { 1: new Audio(toneWav(1)), 2: new Audio(toneWav(2)) }; } catch { tones = {}; }
+  }
+  return Object.values(tones);
+}
+
 function beep(count) {
+  tonePlayers();
+  const a = tones[count];
+  if (a) {
+    try {
+      a.muted = false;
+      a.currentTime = 0;
+      a.play().catch(() => webBeep(count));
+      return;
+    } catch { /* fall back */ }
+  }
+  webBeep(count);
+}
+
+function webBeep(count) {
   if (!actx) return;
   try { if (actx.state !== "running") actx.resume(); } catch { /* ignore */ } // the camera can pause the sound
   for (let i = 0; i < count; i++) {
@@ -335,7 +428,7 @@ function showDiag(force) {
   if (!force && t - diagShownAt < 500) return;
   diagShownAt = t;
   const v = $("video");
-  const text = `face: ${diag.face} · hands: ${diag.hands} · frames: ${diag.frames} · faces: ${diag.faces} · hands up: ${diag.handsUp} · video: ${v.videoWidth}x${v.videoHeight}` + (diag.err ? ` · error: ${diag.err}` : "");
+  const text = `face: ${diag.face} · hands: ${diag.hands} · frames: ${diag.frames} · faces: ${diag.faces} · hands up: ${diag.handsUp} · turn: ${det.lastYaw.toFixed(2)} · size: ${det.valley ? (det.lastSize / det.valley).toFixed(2) : "-"} · video: ${v.videoWidth}x${v.videoHeight}` + (diag.err ? ` · error: ${diag.err}` : "");
   for (const el of document.querySelectorAll(".diag")) el.textContent = text;
 }
 
@@ -495,7 +588,7 @@ async function choosePrayer(key) {
   app.mode = "calib";
   $("calibTitle").textContent = `صلاة ${PRAYERS[key].name}`;
   $("calibMsg").textContent = "بنشغّل الكاميرا…";
-  $("calibHint").textContent = PLACES[settings.place].hint;
+  $("calibHint").textContent = POSTURES[settings.posture].hint || PLACES[settings.place].hint;
   $("calibBar").style.width = "0%";
   $("startNow").hidden = true;
   show("calib");
@@ -537,7 +630,7 @@ function finish(t, how) {
   const segs = app.steps.slice(0, app.ptr + 1).map((s, i) => ({
     g: s.g, label: s.label, start: app.starts[i], end: app.starts[i + 1] ?? t,
   }));
-  const rec = { id: app.t0, key: app.key, name: p.name, n: p.n, place: settings.place, t0: app.t0, end: t, how, segs };
+  const rec = { id: app.t0, key: app.key, name: p.name, n: p.n, place: settings.place, posture: settings.posture, t0: app.t0, end: t, how, segs };
   const hist = load(HIST_KEY, []);
   hist.unshift(rec);
   save(HIST_KEY, hist.slice(0, 200));
@@ -622,8 +715,9 @@ function renderChip(t) {
 }
 
 function renderMeter() {
-  const ratio = det.seen ? det.ema / det.base : det.lastRatio;
-  const p = Math.max(0, Math.min(1, (ratio - 1) / (settings.sens - 1)));
+  // how far toward "closer" this upright position is; full while bowed
+  const ratio = det.valley ? det.lastSize / det.valley : 1;
+  const p = det.pose === "near" ? 1 : Math.max(0, Math.min(1, (ratio - 1) / (settings.sens - 1)));
   $("nearBar").style.width = `${Math.round(p * 100)}%`;
 }
 
@@ -692,10 +786,21 @@ $("histList").addEventListener("click", (e) => {
 
 // ---------- wiring ----------
 function showPlace() {
-  for (const b of document.querySelectorAll(".place")) b.setAttribute("aria-pressed", String(b.dataset.place === settings.place));
+  for (const b of document.querySelectorAll("#placeButtons .place")) b.setAttribute("aria-pressed", String(b.dataset.place === settings.place));
+  for (const b of document.querySelectorAll("#postureButtons .place")) b.setAttribute("aria-pressed", String(b.dataset.posture === settings.posture));
+  $("placeRow").hidden = settings.posture !== "sit"; // standing always uses the floor
+  $("postureHint").textContent = POSTURES[settings.posture].hint || "";
   $("sens").value = String(settings.sens);
   sensText();
 }
+$("postureButtons").addEventListener("click", (e) => {
+  const b = e.target.closest(".place");
+  if (!b) return;
+  settings.posture = b.dataset.posture;
+  save(POSTURE_KEY, settings.posture);
+  loadSens();
+  showPlace();
+});
 $("placeButtons").addEventListener("click", (e) => {
   const b = e.target.closest(".place");
   if (!b) return;
@@ -726,12 +831,12 @@ setDiagVisible(Boolean(load(DIAG_KEY, false)));
 
 function sensText() {
   const pct = Math.round((settings.sens - 1) * 100);
-  $("sensText").textContent = `بيحسبها قرب لما وشك يكبر ${ar(pct)}٪ عن قعدتك العادية.`;
+  $("sensText").textContent = `بيحسبها قرب لما وشك يكبر ${ar(pct)}٪ عن الحركة اللي قبلها.`;
 }
 showPlace();
 $("sens").addEventListener("input", (e) => {
   settings.sens = Number(e.target.value);
-  save(`${SENS_KEY}.${settings.place}`, settings.sens);
+  save(`${SENS_KEY}.${sensSlot()}`, settings.sens);
   sensText();
 });
 
@@ -758,7 +863,7 @@ setInterval(() => renderLive(false), 250);
 if (SIM) {
   window.__pc = {
     feed(w, yaw = 0, t, handsUp = false) { simNow = t ?? simNow + 100; onObservation(w, yaw, simNow, handsUp); },
-    state: () => ({ mode: app.mode, ptr: app.ptr, step: app.steps[app.ptr]?.label, group: app.steps[app.ptr]?.g, pose: det.pose, base: det.base }),
+    state: () => ({ mode: app.mode, ptr: app.ptr, step: app.steps[app.ptr]?.label, group: app.steps[app.ptr]?.g, pose: det.pose, valley: det.valley, peak: det.peak }),
     history: () => load(HIST_KEY, []),
   };
 }
