@@ -114,25 +114,46 @@ const app = {
 };
 
 // ---------- face tracking state ----------
-// valley = smallest face size since the last move away (upright);
-// peak = biggest face size since the last move closer (bowed).
+// Two signals say "bowed": the face gets bigger (closer to the phone) and it moves down in the
+// picture. valley/home = size and place of the face while upright; peak/low = biggest size and
+// lowest place while bowed. Each move is measured from the end of the move before it.
+const DOWN_FACES = 1.0;     // moving down by one face height counts as a full lean
+const RISE_FACES = 0.6;     // moving back up by this many face heights counts as rising
+const DEEP_LOST_MS = 1500;  // face gone this long in one bow = a deep bow (sujood)
 const det = {
   ema: 0, pose: "far", cand: null, candSince: 0, valley: 0, peak: 0,
+  pos: null, home: null, low: null, score: 0,
   lastSeen: 0, lastSize: 0, lastYaw: 0, yawHist: [], seen: false,
   calib: [], calibStart: 0,
+  ev: null, // the current bow: { start, valley, peak, lostMs, lostSince, fixed }
 };
+const learn = { ruku: [], sujood: [] }; // depth of the bows seen so far in this prayer
 const sal = { side: 0, since: 0, first: 0, firstAt: 0 };
 const hands = { since: 0 };
 
 function resetTracking() {
-  Object.assign(det, { ema: 0, pose: "far", cand: null, candSince: 0, valley: 0, peak: 0, lastSeen: 0, lastSize: 0, lastYaw: 0, yawHist: [], seen: false, calib: [], calibStart: 0 });
+  Object.assign(det, { ema: 0, pose: "far", cand: null, candSince: 0, valley: 0, peak: 0, pos: null, home: null, low: null, score: 0, lastSeen: 0, lastSize: 0, lastYaw: 0, yawHist: [], seen: false, calib: [], calibStart: 0, ev: null });
+  learn.ruku = []; learn.sujood = [];
   Object.assign(sal, { side: 0, since: 0, first: 0, firstAt: 0 });
   hands.since = 0;
+  rec.reset();
+}
+
+// How far into a bow the face is right now: 1 = enough to count. Size and moving down add up,
+// so a small lean that also drops the head is still caught.
+function leanScore(size) {
+  let s = Math.max(0, (size / det.valley - 1) / (settings.sens - 1));
+  if (det.pos && det.home) {
+    const dy = (det.pos.cy - det.home.cy) / det.home.h; // + = lower in the picture, in face heights
+    const dx = Math.abs(det.pos.cx - det.home.cx) / det.home.h;
+    s += Math.max(0, dy) / DOWN_FACES + (0.5 * dx) / DOWN_FACES;
+  }
+  return s;
 }
 
 // w = face width as a share of the picture width (null = no face), yaw = head turn (-1..1 roughly),
-// handsUp = a hand is raised beside the face (only looked for during the middle tashahhud)
-function onObservation(w, yaw, t, handsUp = false) {
+// handsUp = a hand is raised beside the face, pos = face centre and height as shares of the picture
+function onObservation(w, yaw, t, handsUp = false, pos = null) {
   det.seen = w != null;
   if (w != null) {
     det.lastSeen = t;
@@ -140,29 +161,39 @@ function onObservation(w, yaw, t, handsUp = false) {
     det.lastYaw = yaw;
     det.yawHist.push([t, yaw]);
     while (det.yawHist.length && t - det.yawHist[0][0] > 700) det.yawHist.shift();
+    const p = pos || { cx: 0.5, cy: 0.45, h: w };
+    det.pos = det.pos ? { cx: det.pos.cx * 0.5 + p.cx * 0.5, cy: det.pos.cy * 0.5 + p.cy * 0.5, h: det.pos.h * 0.5 + p.h * 0.5 } : { ...p };
   }
   if (app.mode === "calib") return calibStep(w, t);
   if (app.mode === "takbeer") return takbeerStep(handsUp, t);
   if (app.mode !== "pray") return;
 
-  const up = settings.sens;                  // closer: face this many times bigger than the valley
   const down = 1 + (settings.sens - 1) * 0.7; // away: face this many times smaller than the peak
   let want = det.pose;
   if (w != null) {
     const size = det.ema;
     det.lastSize = size;
     if (det.pose === "far") {
+      det.score = leanScore(size);
       // keep the smallest upright size; follow very slowly if the person settles closer
       det.valley = size < det.valley ? size : det.valley + (size - det.valley) * 0.002;
-      if (size >= det.valley * up) want = "near";
+      if (det.score < 0.3 && det.home) det.home = { cx: det.home.cx * 0.95 + det.pos.cx * 0.05, cy: det.home.cy * 0.95 + det.pos.cy * 0.05, h: det.home.h * 0.95 + det.pos.h * 0.05 };
+      if (det.score >= 1) want = "near";
     } else {
       det.peak = Math.max(det.peak, size);
-      if (size <= det.peak / down) want = "far";
+      if (!det.low || det.pos.cy > det.low.cy) det.low = { ...det.pos };
+      const back = (det.low.cy - det.pos.cy) / det.low.h; // moved back up, in face heights
+      if (size <= det.peak / down || (back >= RISE_FACES && size <= det.peak * 1.02)) want = "far";
+      if (det.ev?.lostSince) { det.ev.lostMs += t - det.ev.lostSince; det.ev.lostSince = 0; }
+      if (det.ev) det.ev.peak = Math.max(det.ev.peak, size);
     }
-  } else if (det.pose === "far" && t - det.lastSeen > LOST_AS_NEAR_MS && det.lastSize >= det.valley * (1 + (up - 1) * 0.5)) {
-    want = "near"; // face left the picture while coming close (head bent down in sujood)
+  } else if (det.pose === "far" && t - det.lastSeen > LOST_AS_NEAR_MS) {
+    // face left the picture while coming close or going down (head bent in sujood)
+    const atBottom = det.pos && det.pos.cy + det.pos.h / 2 > 0.92;
+    if (det.score >= 0.5 || atBottom) want = "near";
   } else if (det.pose === "near") {
     det.peak = Math.max(det.peak, det.lastSize * 1.25); // lost while bowed: it got even closer
+    if (det.ev && !det.ev.lostSince) det.ev.lostSince = det.lastSeen;
   }
 
   if (want !== det.pose) {
@@ -170,14 +201,95 @@ function onObservation(w, yaw, t, handsUp = false) {
     else if (t - det.candSince >= (want === "near" ? NEAR_HOLD_MS : FAR_HOLD_MS)) {
       det.pose = want; det.cand = null;
       // start the next comparison from where the move ended
-      if (want === "near") det.peak = det.lastSize; else det.valley = det.lastSize;
+      if (want === "near") {
+        det.peak = det.lastSize; det.low = det.pos ? { ...det.pos } : null;
+        det.ev = { start: det.candSince, valley: det.valley, peak: det.lastSize, lostMs: 0, lostSince: det.seen ? 0 : det.lastSeen, fixed: false };
+      } else {
+        det.valley = det.lastSize; if (det.pos) det.home = { ...det.pos };
+        if (det.ev?.lostSince) { det.ev.lostMs += t - det.ev.lostSince; det.ev.lostSince = 0; }
+        endOfBow(t);
+      }
+      rec.event(t, want);
       onPose(want, t);
     }
   } else det.cand = null;
 
+  if (det.pose === "near") fixMissedRuku(t);
   handsCheck(handsUp, t);
   salamCheck(w != null, yaw, t);
+  rec.sample(t);
 }
+
+// ---------- self-correction from the order of the prayer ----------
+// A sujood is a deeper bow than a ruku. If a deep bow comes while a ruku is expected, the ruku was
+// missed: count it (with no time) and treat this bow as the sujood. If a shallow bow comes while
+// the 2nd sujood is expected, that sujood was missed and this bow is the next rak'ah's ruku.
+const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 0; };
+const evLost = (ev, t) => ev.lostMs + (ev.lostSince ? t - ev.lostSince : 0);
+
+function isDeep(ev, t) {
+  const rukuLosesFace = learn.ruku.some((r) => r.lost >= DEEP_LOST_MS);
+  if (evLost(ev, t) >= DEEP_LOST_MS && !rukuLosesFace) return true;
+  if (learn.ruku.length && learn.sujood.length) {
+    const r = median(learn.ruku.map((x) => x.ratio)), sj = median(learn.sujood.map((x) => x.ratio));
+    if (sj >= r * 1.3 && ev.peak / ev.valley >= (r + sj) / 2) return true;
+  }
+  return false;
+}
+
+function isShallow(ev, t) {
+  if (evLost(ev, t) >= 500 || !learn.ruku.length || !learn.sujood.length) return false;
+  const r = median(learn.ruku.map((x) => x.ratio)), sj = median(learn.sujood.map((x) => x.ratio));
+  const sujoodLoseFace = learn.sujood.filter((x) => x.lost >= DEEP_LOST_MS).length * 2 >= learn.sujood.length;
+  if (!(sujoodLoseFace || sj >= r * 1.3)) return false; // sujood and ruku look alike: can't tell
+  const ratio = ev.peak / ev.valley;
+  return ratio <= r * 1.15 && ratio < (r + sj) / 2;
+}
+
+function fixMissedRuku(t) {
+  const ev = det.ev, cur = app.steps[app.ptr];
+  if (!ev || ev.fixed || cur.label !== "الركوع" || !isDeep(ev, t)) return;
+  ev.fixed = true;
+  const at = app.starts[app.ptr];
+  advance(at); // rising: no time
+  advance(at); // this bow is the 1st sujood
+  rec.event(t, "fix: missed ruku");
+}
+
+// Called when a bow ends (the person moved back up), before the step moves on.
+function endOfBow(t) {
+  const ev = det.ev, cur = app.steps[app.ptr];
+  if (!ev || cur.pose !== "near") return;
+  let label = cur.label;
+  if (label === "السجدة الثانية" && !ev.fixed && isShallow(ev, t) && app.steps.slice(app.ptr + 1).some((s) => s.label === "الركوع")) {
+    // the 2nd sujood was missed: give it (and the steps up to the ruku) no time
+    const at = app.starts[app.ptr];
+    while (app.steps[app.ptr].label !== "الركوع") advance(at);
+    label = "الركوع";
+    rec.event(t, "fix: missed 2nd sujood");
+  }
+  const depth = { ratio: ev.peak / ev.valley, lost: evLost(ev, t) };
+  if (label === "الركوع") learn.ruku.push(depth); else learn.sujood.push(depth);
+}
+
+// ---------- record of each prayer, to check a missed step afterwards ----------
+// 4 samples a second: time (tenths of a second): size vs upright (%), lean score (%),
+// face height in the picture (%), head turn (%), bowed (1/0). Size and height are -1 when no face.
+const rec = {
+  t0: 0, lastAt: 0, samples: [], events: [],
+  reset() { this.t0 = 0; this.lastAt = 0; this.samples = []; this.events = []; },
+  start(t) { this.reset(); this.t0 = t; },
+  rel(t) { return Math.round((t - this.t0) / 100); },
+  sample(t) {
+    if (!this.t0 || t - this.lastAt < 250) return;
+    this.lastAt = t;
+    const seen = det.seen && det.valley;
+    const size = seen ? Math.round((det.lastSize / det.valley) * 100) : -1;
+    const cy = seen && det.pos ? Math.round(det.pos.cy * 100) : -1;
+    this.samples.push(`${this.rel(t)}:${size},${Math.round(det.score * 100)},${cy},${Math.round(det.lastYaw * 100)},${det.pose === "near" ? 1 : 0}`);
+  },
+  event(t, what) { if (this.t0) this.events.push(`${this.rel(t)}:${what}`); },
+};
 
 // Is the hand detector needed on this frame? Only during the middle tashahhud.
 function wantHands(t) {
@@ -212,6 +324,7 @@ function calibStep(w, t) {
     det.valley = sorted[Math.floor(sorted.length / 2)];
     det.ema = det.valley;
     det.lastSize = det.valley;
+    det.home = det.pos ? { ...det.pos } : { cx: 0.5, cy: 0.45, h: det.valley };
     waitForTakbeer();
   }
 }
@@ -251,6 +364,7 @@ function advance(t) {
   const s = app.steps[app.ptr];
   if (s.tone) cue(s.tone);
   if (s.last) Object.assign(sal, { side: 0, since: t, first: 0, firstAt: 0 });
+  rec.event(t, `step ${app.ptr}`);
   renderLive(true);
 }
 
@@ -258,6 +372,7 @@ function stepBack() {
   if (app.ptr === 0) return;
   app.starts.length = app.ptr;
   app.ptr--;
+  rec.event(now(), `back to step ${app.ptr}`);
   renderLive(true);
 }
 
@@ -520,7 +635,7 @@ function frame() {
   const video = $("video");
   if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
-    let w = null, yaw = 0, box = null, handsUp = false;
+    let w = null, yaw = 0, box = null, handsUp = false, pos = null;
     const t = Date.now();
     try {
       const res = detector.detectForVideo(video, performance.now());
@@ -530,6 +645,11 @@ function frame() {
       if (d) {
         box = d.boundingBox;
         w = box.width / video.videoWidth;
+        pos = {
+          cx: (box.originX + box.width / 2) / video.videoWidth,
+          cy: (box.originY + box.height / 2) / video.videoHeight,
+          h: box.height / video.videoHeight,
+        };
         const k = d.keypoints;
         if (k && k.length >= 3) {
           const eyeMid = (k[0].x + k[1].x) / 2;
@@ -544,7 +664,7 @@ function frame() {
     } catch (e) { diag.err = String(e?.message || e); }
     showDiag();
     if (app.mode === "calib" || app.mode === "takbeer") drawBox(box, video);
-    onObservation(w, yaw, t, handsUp);
+    onObservation(w, yaw, t, handsUp, pos);
     if (app.mode === "pray") renderMeter();
   }
   setTimeout(frame, FRAME_MS); // a plain timer: animation frames can be held back by the browser
@@ -608,6 +728,8 @@ function startPrayer(t) {
   app.t0 = t;
   app.end = 0;
   app.drawnPtr = -1;
+  rec.start(t);
+  rec.event(t, `start ${app.key} ${settings.posture}/${settings.place} sens ${settings.sens}`);
   $("pName").textContent = `صلاة ${p.name}`;
   // keep the video on screen (small), so the phone does not pause a hidden camera
   const video = $("video");
@@ -630,11 +752,25 @@ function finish(t, how) {
   const segs = app.steps.slice(0, app.ptr + 1).map((s, i) => ({
     g: s.g, label: s.label, start: app.starts[i], end: app.starts[i + 1] ?? t,
   }));
-  const rec = { id: app.t0, key: app.key, name: p.name, n: p.n, place: settings.place, posture: settings.posture, t0: app.t0, end: t, how, segs };
+  rec.event(t, `end ${how}`);
+  const entry = {
+    id: app.t0, key: app.key, name: p.name, n: p.n, place: settings.place, posture: settings.posture,
+    t0: app.t0, end: t, how, segs,
+    trace: { sens: settings.sens, events: rec.events.join("; "), samples: rec.samples.join(" ") },
+  };
+  rec.reset();
   const hist = load(HIST_KEY, []);
-  hist.unshift(rec);
+  hist.unshift(entry);
+  hist.forEach((r, i) => { if (i >= 10) delete r.trace; }); // keep the detailed record of the last 10 only
   save(HIST_KEY, hist.slice(0, 200));
-  showReport(rec);
+  showReport(entry);
+}
+
+// The record as plain text, to paste in a chat when a step was missed.
+function traceText(r) {
+  const head = `prayer-counter ${r.name} ${new Date(r.t0).toISOString()} posture=${r.posture} place=${r.place} sens=${r.trace.sens}`;
+  const steps = r.segs.map((s, i) => `${i}:${s.label}=${((s.end - s.start) / 1000).toFixed(1)}s`).join(" | ");
+  return `${head}\nSTEPS ${steps}\nEVENTS ${r.trace.events}\nSAMPLES t:size,score,y,turn,bowed ${r.trace.samples}`;
 }
 
 // ---------- rendering ----------
@@ -716,8 +852,7 @@ function renderChip(t) {
 
 function renderMeter() {
   // how far toward "closer" this upright position is; full while bowed
-  const ratio = det.valley ? det.lastSize / det.valley : 1;
-  const p = det.pose === "near" ? 1 : Math.max(0, Math.min(1, (ratio - 1) / (settings.sens - 1)));
+  const p = det.pose === "near" ? 1 : Math.max(0, Math.min(1, det.score));
   $("nearBar").style.width = `${Math.round(p * 100)}%`;
 }
 
@@ -729,6 +864,10 @@ function showReport(rec) {
   const how = rec.how === "salam" ? "انتهت بالسلام تلقائيًا" : "انتهت بزرار الإنهاء";
   $("rHow").textContent = `${ar(rakahs)} من ${ar(rec.n)} ركعات — ${how}`;
   $("rLog").innerHTML = logHTML(rec.segs, -1);
+  app.shown = rec;
+  $("rCopy").hidden = !rec.trace;
+  $("rCopy").textContent = "انسخ التسجيل";
+  $("rTrace").hidden = true;
   show("report");
   $("rLog").scrollTop = 0;
 }
@@ -851,6 +990,16 @@ $("btnNext").addEventListener("click", () => {
   else advance(now());
 });
 $("btnBack").addEventListener("click", () => { if (app.mode === "pray") stepBack(); });
+$("rCopy").addEventListener("click", () => {
+  if (!app.shown?.trace) return;
+  const text = traceText(app.shown);
+  const showBox = () => { const box = $("rTrace"); box.value = text; box.hidden = false; box.focus(); box.select(); };
+  try {
+    navigator.clipboard.writeText(text)
+      .then(() => { $("rCopy").textContent = "اتنسخ — الصقه في الشات"; })
+      .catch(showBox);
+  } catch { showBox(); }
+});
 $("btnStop").addEventListener("click", () => finish(now(), "button"));
 $("openHistory").addEventListener("click", showHistory);
 $("rHistory").addEventListener("click", showHistory);
@@ -862,7 +1011,7 @@ setInterval(() => renderLive(false), 250);
 // Test hook (only with ?sim): feed face values by hand to check the counting logic.
 if (SIM) {
   window.__pc = {
-    feed(w, yaw = 0, t, handsUp = false) { simNow = t ?? simNow + 100; onObservation(w, yaw, simNow, handsUp); },
+    feed(w, yaw = 0, t, handsUp = false, pos = null) { simNow = t ?? simNow + 100; onObservation(w, yaw, simNow, handsUp, pos); },
     state: () => ({ mode: app.mode, ptr: app.ptr, step: app.steps[app.ptr]?.label, group: app.steps[app.ptr]?.g, pose: det.pose, valley: det.valley, peak: det.peak }),
     history: () => load(HIST_KEY, []),
   };
