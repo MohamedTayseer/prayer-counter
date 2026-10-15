@@ -1,0 +1,7 @@
+# local https for testing on the home Wi-Fi: never upload the private key
+https/
+# local-only helper page (shows the PC's home network address)
+docs/qr.html
+.remember/
+.claude/
+__pycache__/

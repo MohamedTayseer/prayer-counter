@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0e1719">
+<title>عدّاد الصلاة</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Reem+Kufi:wght@500;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="style.css?v=7">
+</head>
+<body>
+
+<!-- Home: choose the prayer -->
+<section id="home" class="screen">
+  <header class="home-head">
+    <h1>عدّاد الصلاة</h1>
+    <p class="sub">صلاة على الكرسي · بيعدّ الركعات والسجدات ويحسب وقت كل جزء</p>
+  </header>
+
+  <div class="prayers" id="prayerButtons">
+    <button class="prayer" data-key="fajr"><span>الفجر</span><small>ركعتين</small></button>
+    <button class="prayer" data-key="dhuhr"><span>الظهر</span><small>٤ ركعات</small></button>
+    <button class="prayer" data-key="asr"><span>العصر</span><small>٤ ركعات</small></button>
+    <button class="prayer" data-key="maghrib"><span>المغرب</span><small>٣ ركعات</small></button>
+    <button class="prayer" data-key="isha"><span>العشاء</span><small>٤ ركعات</small></button>
+  </div>
+
+  <div class="settings">
+    <span class="set-label">مكان الموبايل</span>
+    <div class="places" id="placeButtons">
+      <button class="place" data-place="front" aria-pressed="true">قدامي</button>
+      <button class="place" data-place="lap" aria-pressed="false">على رجلي</button>
+    </div>
+    <label for="sens">حساسية القرب من الموبايل <small class="hint">(محفوظة لكل مكان)</small></label>
+    <div class="sens-row">
+      <span class="hint">حساس أكتر</span>
+      <input id="sens" type="range" min="1.15" max="1.8" step="0.05" value="1.35">
+      <span class="hint">أقل</span>
+    </div>
+    <p class="hint" id="sensText"></p>
+  </div>
+
+  <button class="link-btn" id="openHistory">السجل · الصلوات اللي فاتت</button>
+  <p class="privacy">الكاميرا بتشتغل على الموبايل بس. مفيش تسجيل ولا حاجة بتتبعت لأي مكان.</p>
+</section>
+
+<!-- Calibration: learn the normal face size -->
+<section id="calib" class="screen" hidden>
+  <h2 id="calibTitle">صلاة …</h2>
+  <p class="hint" id="calibHint"></p>
+  <div class="cam-wrap" id="camWrap">
+    <video id="video" playsinline muted></video>
+    <canvas id="overlay"></canvas>
+  </div>
+  <p class="calib-msg" id="calibMsg">بنشغّل الكاميرا…</p>
+  <div class="meter"><div class="meter-fill" id="calibBar"></div></div>
+  <p class="diag"></p>
+  <button class="stop" id="startNow" hidden>ابدأ من غير ما يشوف إيدي</button>
+  <button class="ghost" id="calibCancel">إلغاء</button>
+</section>
+
+<!-- Prayer: live list -->
+<section id="pray" class="screen" hidden>
+  <div class="top">
+    <div class="top-row">
+      <span class="pname" id="pName">الظهر</span>
+      <span class="top-side"><span class="chip" id="chip">شايفك</span><span class="thumb" id="thumb"></span></span>
+    </div>
+    <div class="total num" id="total">0:00</div>
+    <div class="rakah" id="rakahNow">الركعة الأولى من ٤</div>
+    <div class="meter small" title="القرب من الموبايل"><div class="meter-fill" id="nearBar"></div><div class="meter-mark"></div></div>
+  </div>
+  <ol class="log" id="log"></ol>
+  <p class="diag"></p>
+  <nav class="bottom">
+    <button class="ghost" id="btnBack">خطوة لورا</button>
+    <button class="ghost" id="btnNext">خطوة لقدام</button>
+    <button class="stop" id="btnStop">إنهاء</button>
+  </nav>
+</section>
+
+<!-- Report: the same list, frozen -->
+<section id="report" class="screen" hidden>
+  <div class="top">
+    <div class="top-row">
+      <span class="pname" id="rName">الظهر</span>
+      <span class="when" id="rWhen"></span>
+    </div>
+    <div class="total num" id="rTotal">0:00</div>
+    <div class="rakah" id="rHow"></div>
+  </div>
+  <ol class="log" id="rLog"></ol>
+  <nav class="bottom">
+    <button class="ghost" id="rHistory">السجل</button>
+    <button class="stop" id="rHome">الرئيسية</button>
+  </nav>
+</section>
+
+<!-- History -->
+<section id="history" class="screen" hidden>
+  <h2>السجل</h2>
+  <div id="histAvg"></div>
+  <ul class="hist" id="histList"></ul>
+  <p class="hint" id="histEmpty" hidden>لسه مفيش صلوات محفوظة. أول صلاة تخلّصها هتظهر هنا.</p>
+  <nav class="bottom">
+    <button class="stop" id="hHome">الرئيسية</button>
+  </nav>
+</section>
+
+<div class="flash" id="flash" hidden>الله أكبر</div>
+
+<script type="module" src="app.js?v=7"></script>
+</body>
+</html>
