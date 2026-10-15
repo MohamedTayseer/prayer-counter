@@ -7,6 +7,9 @@
 // The middle tashahhud ends when the hands come up beside the face for "Allahu Akbar".
 // After the last tashahhud, turning the head right then left (the salam) ends the prayer.
 
+// Version of this app (shown on the start screen; see CHANGELOG.md).
+const APP_VERSION = 5;
+
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
 const MP_WASM = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`;
@@ -55,6 +58,12 @@ const SALAM_HOLD_MS = 200;
 const SALAM_ARM_MS = 1000;   // salam is only watched 1 s into the last tashahhud
 const HANDS_ARM_MS = 3000;   // raised hands are only watched 3 s into the middle tashahhud
 const HANDS_HOLD_MS = 250;   // hands must stay up this long
+const RUKU_SOON_MS = 6000;   // after the takbeer before ruku, a smaller bow counts for this long
+const RUKU_SOON_SCORE = 0.6; // ...this much of a full lean is enough then
+const TWO_RAISES_MS = 20000; // two raises this close with no bow between = a missed ruku
+const BEHIND_MS = 5000;      // a raise in sujood/sitting means "the app is behind" only after this long there
+const MIN_BOW_MS = 1000;     // a bow shorter than this is a twitch, not a ruku or sujood
+const MIN_RISE_MS = 800;     // a rise shorter than this between two bows is a twitch too (a real one measures 1 s+)
 const FRAME_MS = 66;         // look at the camera about 15 times a second
 
 const SIM = new URLSearchParams(location.search).has("sim"); // test mode: no camera, feed values by hand
@@ -126,16 +135,25 @@ const det = {
   lastSeen: 0, lastSize: 0, lastYaw: 0, yawHist: [], seen: false,
   calib: [], calibStart: 0,
   ev: null, // the current bow: { start, valley, peak, lostMs, lostSince, fixed }
+  // to undo a twitch: what the last move changed
+  nearAdvance: 0, prevValley: 0, prevHome: null,
+  farSince: 0, farPtr: -1, farAdvance: 0, prevEv: null, prevLearn: null,
 };
 const learn = { ruku: [], sujood: [] }; // depth of the bows seen so far in this prayer
 const sal = { side: 0, since: 0, first: 0, firstAt: 0 };
-const hands = { since: 0 };
+// up = a raise is going on (both hands up); a new raise needs the hands to come down first.
+// rukuSoon = the takbeer before ruku was seen in this reading step.
+const hands = { since: 0, up: false, downSince: 0, rukuSoon: null };
 
 function resetTracking() {
-  Object.assign(det, { ema: 0, pose: "far", cand: null, candSince: 0, valley: 0, peak: 0, pos: null, home: null, low: null, score: 0, lastSeen: 0, lastSize: 0, lastYaw: 0, yawHist: [], seen: false, calib: [], calibStart: 0, ev: null });
+  Object.assign(det, {
+    ema: 0, pose: "far", cand: null, candSince: 0, valley: 0, peak: 0, pos: null, home: null, low: null, score: 0,
+    lastSeen: 0, lastSize: 0, lastYaw: 0, yawHist: [], seen: false, calib: [], calibStart: 0, ev: null,
+    nearAdvance: 0, prevValley: 0, prevHome: null, farSince: 0, farPtr: -1, farAdvance: 0, prevEv: null, prevLearn: null,
+  });
   learn.ruku = []; learn.sujood = [];
   Object.assign(sal, { side: 0, since: 0, first: 0, firstAt: 0 });
-  hands.since = 0;
+  Object.assign(hands, { since: 0, up: false, downSince: 0, rukuSoon: null });
   rec.reset();
 }
 
@@ -165,7 +183,7 @@ function onObservation(w, yaw, t, handsUp = false, pos = null) {
     det.pos = det.pos ? { cx: det.pos.cx * 0.5 + p.cx * 0.5, cy: det.pos.cy * 0.5 + p.cy * 0.5, h: det.pos.h * 0.5 + p.h * 0.5 } : { ...p };
   }
   if (app.mode === "calib") return calibStep(w, t);
-  if (app.mode === "takbeer") return takbeerStep(handsUp, t);
+  if (app.mode === "takbeer") return takbeerStep(handsUp && uprightNow(), t);
   if (app.mode !== "pray") return;
 
   const down = 1 + (settings.sens - 1) * 0.7; // away: face this many times smaller than the peak
@@ -178,7 +196,9 @@ function onObservation(w, yaw, t, handsUp = false, pos = null) {
       // keep the smallest upright size; follow very slowly if the person settles closer
       det.valley = size < det.valley ? size : det.valley + (size - det.valley) * 0.002;
       if (det.score < 0.3 && det.home) det.home = { cx: det.home.cx * 0.95 + det.pos.cx * 0.05, cy: det.home.cy * 0.95 + det.pos.cy * 0.05, h: det.home.h * 0.95 + det.pos.h * 0.05 };
-      if (det.score >= 1) want = "near";
+      // right after the takbeer before ruku a ruku is expected, so a smaller bow is enough
+      const soon = hands.rukuSoon && hands.rukuSoon.ptr === app.ptr && t - hands.rukuSoon.at <= RUKU_SOON_MS;
+      if (det.score >= (soon ? RUKU_SOON_SCORE : 1)) want = "near";
     } else {
       det.peak = Math.max(det.peak, size);
       if (!det.low || det.pos.cy > det.low.cy) det.low = { ...det.pos };
@@ -199,25 +219,93 @@ function onObservation(w, yaw, t, handsUp = false, pos = null) {
   if (want !== det.pose) {
     if (det.cand !== want) { det.cand = want; det.candSince = t; }
     else if (t - det.candSince >= (want === "near" ? NEAR_HOLD_MS : FAR_HOLD_MS)) {
+      const moveStart = det.candSince;
       det.pose = want; det.cand = null;
       // start the next comparison from where the move ended
       if (want === "near") {
-        det.peak = det.lastSize; det.low = det.pos ? { ...det.pos } : null;
-        det.ev = { start: det.candSince, valley: det.valley, peak: det.lastSize, lostMs: 0, lostSince: det.seen ? 0 : det.lastSeen, fixed: false };
+        if (!undoShortRise(moveStart, t)) {
+          det.prevValley = det.valley; det.prevHome = det.home ? { ...det.home } : null;
+          det.peak = det.lastSize; det.low = det.pos ? { ...det.pos } : null;
+          det.ev = { start: moveStart, valley: det.valley, peak: det.lastSize, lostMs: 0, lostSince: det.seen ? 0 : det.lastSeen, fixed: false };
+          rec.event(t, want);
+          const before = app.ptr;
+          onPose(want, t);
+          det.nearAdvance = app.ptr - before;
+        }
       } else {
-        det.valley = det.lastSize; if (det.pos) det.home = { ...det.pos };
         if (det.ev?.lostSince) { det.ev.lostMs += t - det.ev.lostSince; det.ev.lostSince = 0; }
-        endOfBow(t);
+        if (!undoShortBow(moveStart, t)) {
+          det.valley = det.lastSize; if (det.pos) det.home = { ...det.pos };
+          const before = app.ptr;
+          const learned = endOfBow(t);
+          rec.event(t, want);
+          onPose(want, t);
+          Object.assign(det, { farSince: moveStart, farPtr: app.ptr, farAdvance: app.ptr - before, prevEv: det.ev, prevLearn: learned });
+        }
       }
-      rec.event(t, want);
-      onPose(want, t);
     }
   } else det.cand = null;
 
   if (det.pose === "near") fixMissedRuku(t);
-  handsCheck(handsUp, t);
+  const raiseAt = handsEdge(handsUp && uprightNow(), t);
+  if (raiseAt) onRaise(raiseAt, t);
   salamCheck(w != null, yaw, t);
   rec.sample(t);
+}
+
+// ---------- twitches: a move too short to be a real ruku, sujood or rise is undone ----------
+function undoShortBow(moveStart, t) {
+  const ev = det.ev;
+  if (!ev || ev.fixed || moveStart - ev.start >= MIN_BOW_MS || isDeep(ev, t)) return false;
+  if (det.nearAdvance !== 1 || app.steps[app.ptr].pose !== "near") return false;
+  stepBack(); // the bow never happened: back to the step before, which keeps its time
+  det.valley = det.prevValley || det.lastSize;
+  if (det.prevHome) det.home = det.prevHome;
+  det.ev = null;
+  rec.event(t, "undo: short bow");
+  return true;
+}
+
+function undoShortRise(moveStart, t) {
+  if (!det.prevEv || det.farAdvance !== 1 || app.ptr !== det.farPtr || moveStart - det.farSince >= MIN_RISE_MS) return false;
+  if (app.steps[app.ptr].pose !== "far") return false;
+  stepBack(); // back into the bow before: the rise never happened
+  det.ev = det.prevEv;
+  det.prevEv = null;
+  if (det.prevLearn) learn[det.prevLearn].pop();
+  det.prevLearn = null;
+  det.peak = Math.max(det.ev.peak, det.lastSize);
+  det.low = det.pos ? { ...det.pos } : det.low;
+  det.valley = det.ev.valley;
+  if (det.prevHome) det.home = det.prevHome;
+  rec.event(t, "undo: short rise");
+  return true;
+}
+
+// The person is upright (seen from the face) - needed before a hand raise can count.
+function uprightNow() {
+  if (!det.seen || !det.valley) return false;
+  if (det.pose === "far") return det.score < 1;
+  const base = det.ev ? det.ev.valley : det.valley;
+  return det.lastSize <= base * (1 + (settings.sens - 1) * 0.6);
+}
+
+// Returns the time a new raise began (both hands up, held), or 0. After a raise the hands must
+// come down before the next one can count, so one long raise is never counted twice.
+function handsEdge(up, t) {
+  if (up) {
+    hands.downSince = 0;
+    if (hands.up) return 0;
+    if (!hands.since) hands.since = t;
+    if (t - hands.since >= HANDS_HOLD_MS) { hands.up = true; const at = hands.since; hands.since = 0; return at; }
+    return 0;
+  }
+  hands.since = 0;
+  if (hands.up) {
+    if (!hands.downSince) hands.downSince = t;
+    if (t - hands.downSince >= 300) { hands.up = false; hands.downSince = 0; }
+  }
+  return 0;
 }
 
 // ---------- self-correction from the order of the prayer ----------
@@ -259,7 +347,7 @@ function fixMissedRuku(t) {
 // Called when a bow ends (the person moved back up), before the step moves on.
 function endOfBow(t) {
   const ev = det.ev, cur = app.steps[app.ptr];
-  if (!ev || cur.pose !== "near") return;
+  if (!ev || cur.pose !== "near") return null;
   let label = cur.label;
   if (label === "السجدة الثانية" && !ev.fixed && isShallow(ev, t) && app.steps.slice(app.ptr + 1).some((s) => s.label === "الركوع")) {
     // the 2nd sujood was missed: give it (and the steps up to the ruku) no time
@@ -269,7 +357,9 @@ function endOfBow(t) {
     rec.event(t, "fix: missed 2nd sujood");
   }
   const depth = { ratio: ev.peak / ev.valley, lost: evLost(ev, t) };
-  if (label === "الركوع") learn.ruku.push(depth); else learn.sujood.push(depth);
+  const kind = label === "الركوع" ? "ruku" : "sujood";
+  learn[kind].push(depth);
+  return kind;
 }
 
 // ---------- record of each prayer, to check a missed step afterwards ----------
@@ -291,18 +381,79 @@ const rec = {
   event(t, what) { if (this.t0) this.events.push(`${this.rel(t)}:${what}`); },
 };
 
-// Is the hand detector needed on this frame? Only during the middle tashahhud.
-function wantHands(t) {
+// Is the hand detector needed on this frame? Everywhere except the last tashahhud.
+function wantHands() {
   if (app.mode === "takbeer") return true;
-  const cur = app.steps[app.ptr];
-  return app.mode === "pray" && cur?.mid && t - app.starts[app.ptr] >= HANDS_ARM_MS;
+  return app.mode === "pray" && !app.steps[app.ptr]?.last;
 }
 
-// Hands up for "Allahu Akbar" ends the middle tashahhud and starts the reading of rak'ah 3.
-function handsCheck(up, t) {
-  if (!wantHands(t) || det.pose !== "far" || !up) { hands.since = 0; return; }
-  if (!hands.since) hands.since = t;
-  else if (t - hands.since >= HANDS_HOLD_MS) { hands.since = 0; advance(t); }
+// ---------- hand raises as checkpoints ----------
+// Both hands go up at known places: the opening takbeer, the takbeer before ruku, "sami' Allahu
+// liman hamidah" after ruku, and standing up for rak'ah 3. Where the app is decides what a raise
+// means: in the right place it confirms the step; anywhere else the app missed something and
+// catches up (the skipped steps get no time and show "—").
+function onRaise(at, t) {
+  const cur = app.steps[app.ptr];
+  const inStep = t - app.starts[app.ptr];
+  if (cur.last) return;
+
+  if (cur.mid) { // standing up for rak'ah 3
+    if (inStep < HANDS_ARM_MS) return;
+    advance(at);
+    rec.event(t, "raise: stand for rak'ah 3");
+    return;
+  }
+
+  if (cur.label.startsWith("القراءة")) {
+    const soon = hands.rukuSoon;
+    if (soon && soon.ptr === app.ptr && at - soon.at <= TWO_RAISES_MS) {
+      // a 2nd raise with no bow between: the ruku happened unseen, from the 1st raise to this one
+      hands.rukuSoon = null;
+      advance(soon.at); // ruku
+      advance(at);      // rising
+      rec.event(t, "fix: missed ruku (two raises)");
+    } else {
+      hands.rukuSoon = { at, ptr: app.ptr };
+      rec.event(t, "raise: before ruku");
+    }
+    return;
+  }
+
+  if (cur.label === "الركوع") { // "sami' Allahu liman hamidah": already rising
+    forceUpright(t);
+    advance(at);
+    rec.event(t, "raise: after ruku");
+    return;
+  }
+
+  if (cur.label === "الرفع من الركوع") { rec.event(t, "raise: after ruku (confirms)"); return; }
+
+  // sujood or sitting: the hands are down there, so a raise means the app is behind.
+  // A raise right after entering the step is more likely a slip: wait a little first.
+  if (inStep < BEHIND_MS) { rec.event(t, "raise ignored (just entered sujood/sitting)"); return; }
+  const next = app.steps.findIndex((s, i) => i > app.ptr && (s.mid || s.label.startsWith("القراءة")));
+  if (next < 0) return; // last rak'ah: nothing ahead to catch up to
+  forceUpright(t);
+  while (app.ptr < next) advance(at);
+  if (app.steps[app.ptr].mid) {
+    advance(at); // the raise was standing up for rak'ah 3
+    rec.event(t, "fix: behind, raise = stand for rak'ah 3");
+  } else {
+    hands.rukuSoon = { at, ptr: app.ptr }; // the raise was the takbeer before ruku
+    rec.event(t, "fix: behind, raise = before ruku");
+  }
+}
+
+// A raise shows the person is upright: end the bow the app still thinks is going on.
+function forceUpright(t) {
+  Object.assign(det, { prevEv: null, prevLearn: null, farAdvance: 0, farSince: t, farPtr: -1 });
+  if (det.pose !== "near") return;
+  if (det.ev?.lostSince) { det.ev.lostMs += t - det.ev.lostSince; det.ev.lostSince = 0; }
+  if (det.ev && app.steps[app.ptr].label === "الركوع") learn.ruku.push({ ratio: det.ev.peak / det.ev.valley, lost: evLost(det.ev, t) });
+  det.pose = "far"; det.cand = null;
+  det.valley = det.lastSize;
+  if (det.pos) det.home = { ...det.pos };
+  rec.event(t, "far (hands)");
 }
 
 function calibStep(w, t) {
@@ -346,9 +497,8 @@ function takbeerMsg() {
 function takbeerStep(up, t) {
   if (diag.hands === "off" && !SIM) return startPrayer(t); // no hand tool on this phone: start now
   takbeerMsg();
-  if (!up) { hands.since = 0; return; }
-  if (!hands.since) hands.since = t;
-  else if (t - hands.since >= HANDS_HOLD_MS) { const at = hands.since; hands.since = 0; startPrayer(at); }
+  const at = handsEdge(up, t); // the hands stay "up" into the prayer, so this raise is not counted again
+  if (at) startPrayer(at);
 }
 
 function onPose(pose, t) {
@@ -550,6 +700,7 @@ function showDiag(force) {
 // ---------- camera + face detection ----------
 let detector = null;
 let handDetector = null; // optional: without it the middle tashahhud ends at the ruku lean
+let handTick = 0, lastHandsUp = false;
 let stream = null;
 let loopOn = false;
 let lastVideoTime = -1;
@@ -657,10 +808,14 @@ function frame() {
           yaw = (k[2].x - eyeMid) / eyeGap;
         }
       }
-      if (handDetector && wantHands(t)) {
-        handsUp = handsRaised(handDetector.detectForVideo(video, performance.now()), box, video);
+      if (handDetector && wantHands()) {
+        // during the prayer every other frame (about 7 a second) is enough for a raise, and saves battery
+        if (app.mode !== "pray" || (handTick++ & 1) === 0) {
+          lastHandsUp = handsRaised(handDetector.detectForVideo(video, performance.now()), box, video);
+        }
+        handsUp = lastHandsUp;
         if (handsUp) diag.handsUp++;
-      }
+      } else lastHandsUp = false;
     } catch (e) { diag.err = String(e?.message || e); }
     showDiag();
     if (app.mode === "calib" || app.mode === "takbeer") drawBox(box, video);
@@ -670,12 +825,27 @@ function frame() {
   setTimeout(frame, FRAME_MS); // a plain timer: animation frames can be held back by the browser
 }
 
-// A hand counts as raised when its middle is at chin height or above (hands beside the ears for takbeer).
+// A raise = BOTH hands up beside the face, as for a takbeer: one hand on each side of the face,
+// out to the side (not folded in front of the chest), between a bit above the face and a bit
+// below the chin. One hand (scratching), hands on the chest, the lap or the floor never count.
 function handsRaised(res, faceBox, video) {
   const list = res?.landmarks;
-  if (!list || !list.length) return false;
-  const chin = faceBox ? (faceBox.originY + faceBox.height) / video.videoHeight + 0.1 : 0.55;
-  return list.some((pts) => pts.reduce((a, p) => a + p.y, 0) / pts.length < chin);
+  if (!faceBox || !list || list.length < 2) return false;
+  const W = video.videoWidth, H = video.videoHeight;
+  const fcx = (faceBox.originX + faceBox.width / 2) / W;
+  const fw = faceBox.width / W, fh = faceBox.height / H;
+  const top = faceBox.originY / H - 0.5 * fh;
+  const low = (faceBox.originY + faceBox.height) / H + 0.6 * fh;
+  let left = false, right = false;
+  for (const pts of list) {
+    const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+    const cy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+    if (cy < top || cy > low) continue;              // not at the height of a takbeer
+    const side = (cx - fcx) / fw;                     // in face widths from the middle of the face
+    if (side <= -0.45 && side >= -2.5) left = true;
+    else if (side >= 0.45 && side <= 2.5) right = true;
+  }
+  return left && right;
 }
 
 function pickFace(list) {
@@ -754,7 +924,7 @@ function finish(t, how) {
   }));
   rec.event(t, `end ${how}`);
   const entry = {
-    id: app.t0, key: app.key, name: p.name, n: p.n, place: settings.place, posture: settings.posture,
+    id: app.t0, v: APP_VERSION, key: app.key, name: p.name, n: p.n, place: settings.place, posture: settings.posture,
     t0: app.t0, end: t, how, segs,
     trace: { sens: settings.sens, events: rec.events.join("; "), samples: rec.samples.join(" ") },
   };
@@ -768,7 +938,7 @@ function finish(t, how) {
 
 // The record as plain text, to paste in a chat when a step was missed.
 function traceText(r) {
-  const head = `prayer-counter ${r.name} ${new Date(r.t0).toISOString()} posture=${r.posture} place=${r.place} sens=${r.trace.sens}`;
+  const head = `prayer-counter v${r.v ?? "?"} ${r.name} ${new Date(r.t0).toISOString()} posture=${r.posture} place=${r.place} sens=${r.trace.sens}`;
   const steps = r.segs.map((s, i) => `${i}:${s.label}=${((s.end - s.start) / 1000).toFixed(1)}s`).join(" | ");
   return `${head}\nSTEPS ${steps}\nEVENTS ${r.trace.events}\nSAMPLES t:size,score,y,turn,bowed ${r.trace.samples}`;
 }
@@ -972,6 +1142,7 @@ function sensText() {
   const pct = Math.round((settings.sens - 1) * 100);
   $("sensText").textContent = `بيحسبها قرب لما وشك يكبر ${ar(pct)}٪ عن الحركة اللي قبلها.`;
 }
+$("appVer").textContent = `الإصدار ${ar(APP_VERSION)}`;
 showPlace();
 $("sens").addEventListener("input", (e) => {
   settings.sens = Number(e.target.value);
@@ -1014,5 +1185,6 @@ if (SIM) {
     feed(w, yaw = 0, t, handsUp = false, pos = null) { simNow = t ?? simNow + 100; onObservation(w, yaw, simNow, handsUp, pos); },
     state: () => ({ mode: app.mode, ptr: app.ptr, step: app.steps[app.ptr]?.label, group: app.steps[app.ptr]?.g, pose: det.pose, valley: det.valley, peak: det.peak }),
     history: () => load(HIST_KEY, []),
+    handsRaised: (res, box, video) => handsRaised(res, box, video),
   };
 }
