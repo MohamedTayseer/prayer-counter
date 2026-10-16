@@ -102,5 +102,64 @@ if (rec) {
   check("normal Dhuhr: all 12 bows in order", res.pairs.length === 12 && res.misses === 0 && res.extras === 0);
 }
 
+// ---- 3. "first rak'ah standing" with the phone set for sitting (v8) ----
+// The clock starts when he stands up (face leaves the top of the picture). He reads standing, then
+// EITHER does the ruku standing (out of the picture) and sits down, OR sits down and does the ruku
+// sitting. The two sujoods of rak'ah 1 are always on the chair.
+const runMixed = (n, bows, raises, sits, now, handsOn = true) => {
+  const res = alignPrayer({ n, bows, raises, sits, mixed: true, handsOn, t0: 0, now });
+  const steps = buildSteps(n);
+  const tl = timeline({ steps, pairs: res.pairs, bows: res.bows, raises, t0: 0, now });
+  return { res, steps, tl, label: steps[tl.ptr].label + (typeof steps[tl.ptr].g === "number" ? ` r${steps[tl.ptr].g}` : "") };
+};
+// rak'ah 2 (sitting, seen normally): takbeer raise, ruku, "sami' Allahu" raise, sujood, sujood
+const r2Bows = [bow(91, 96), bow(99, 104), bow(106, 111)];
+const r2Raises = [{ t: s(90) }, { t: s(96.6) }];
+const upTo = (list, t) => list.filter((b) => b.s <= t).map((b) => ({ ...b, e: b.e != null && b.e <= t ? b.e : null }));
+{ // A: ruku standing (not seen), sat down at 49 s, then the two sujoods
+  const bows = [bow(51, 56), bow(58, 63), ...r2Bows];
+  const sits = [{ t: s(49) }];
+  const { res } = runMixed(2, bows, r2Raises, sits, s(130));
+  check("mixed A (ruku standing, unseen): first bow seen is sujood 1", res.pairs[0].j === 1 && res.pairs.length === 5 && res.misses === 1,
+    res.pairs.map((p) => slotName(p.j)).join(", "));
+  const at = (t) => runMixed(2, upTo(bows, s(t)), r2Raises.filter((r) => r.t <= s(t)), sits, s(t)).label;
+  check("mixed A live: before sitting it is reading r1", at(45) === "القراءة (الفاتحة والسورة) r1", at(45));
+  check("mixed A live: the first bow after sitting shows as sujood 1", at(53) === "السجدة الأولى r1", at(53));
+  check("mixed A live: then sitting, then sujood 2", at(57) === "الجلسة بين السجدتين r1" && at(60) === "السجدة الثانية r1", `${at(57)} / ${at(60)}`);
+  check("mixed A live: then reading r2", at(66) === "القراءة (الفاتحة والسورة) r2", at(66));
+}
+{ // A, but the standing ruku showed for a moment (face came into the picture from the top)
+  const bows = [bow(41, 44), bow(51, 56), bow(58, 63), ...r2Bows];
+  const { res } = runMixed(2, bows, r2Raises, [{ t: s(49) }], s(130));
+  check("mixed A (standing ruku seen): all bows in order", res.misses === 0 && res.extras === 0 && res.pairs.every((p, i) => p.j === i),
+    res.pairs.map((p) => slotName(p.j)).join(", "));
+}
+{ // B: sat down at 40 s, takbeer raise, ruku sitting, "sami' Allahu" raise, the two sujoods
+  const bows = [bow(43, 48), bow(51, 56), bow(58, 63), ...r2Bows];
+  const raises = [{ t: s(42.5) }, { t: s(48.6) }, ...r2Raises];
+  const sits = [{ t: s(40) }];
+  const { res } = runMixed(2, bows, raises, sits, s(130));
+  check("mixed B (ruku sitting): all bows in order", res.misses === 0 && res.extras === 0 && res.pairs.every((p, i) => p.j === i),
+    res.pairs.map((p) => slotName(p.j)).join(", "));
+  const at = (t) => runMixed(2, upTo(bows, s(t)), raises.filter((r) => r.t <= s(t)), sits, s(t)).label;
+  check("mixed B live: the sitting ruku shows as ruku", at(45) === "الركوع r1", at(45));
+  check("mixed B live: then rising, sujood 1", at(49.5) === "الرفع من الركوع r1" && at(53) === "السجدة الأولى r1", `${at(49.5)} / ${at(53)}`);
+}
+{ // B, takbeer done standing (not seen) but the "sami' Allahu" raise was seen: fixed right after the ruku
+  const bows = [bow(43, 48), bow(51, 56), bow(58, 63), ...r2Bows];
+  const raises = [{ t: s(48.6) }, ...r2Raises];
+  const sits = [{ t: s(40) }];
+  const at = (t) => runMixed(2, upTo(bows, s(t)), raises.filter((r) => r.t <= s(t)), sits, s(t)).label;
+  check("mixed B, no takbeer seen: right after the 'sami' Allahu' raise it shows rising", at(49.5) === "الرفع من الركوع r1", at(49.5));
+  const { res } = runMixed(2, bows, raises, sits, s(130));
+  check("mixed B, no takbeer seen: all bows in order at the end", res.misses === 0 && res.extras === 0 && res.pairs.every((p, i) => p.j === i));
+}
+{ // B with no raise seen at all (hand tool off): the long reading of rak'ah 2 still puts it right
+  const bows = [bow(43, 48), bow(51, 56), bow(58, 63), ...r2Bows];
+  const { res } = runMixed(2, bows, [], [{ t: s(40) }], s(130), false);
+  check("mixed B, hand tool off: all bows in order", res.misses === 0 && res.extras === 0 && res.pairs.every((p, i) => p.j === i),
+    res.pairs.map((p) => slotName(p.j)).join(", "));
+}
+
 console.log(failed ? `\n${failed} FAILED` : "\nall passed");
 process.exit(failed ? 1 : 0);

@@ -28,6 +28,7 @@ export const COST = {
   miss: 4,            // a sujood of the prayer that the camera did not see
   missRuku: 3.8,      // a ruku the camera did not see: a bit more likely (when sitting it is the smallest move)...
   missRukuStanding: 4.2, // ...but a standing ruku is a big move: less likely to be missed than a sujood
+  missRukuMixed: 2,   // "first rak'ah standing", phone set for sitting: the standing ruku is often out of the picture
   extra: 4,           // a bow the camera saw that is not part of the prayer (a twitch, adjusting)
   shortMax: 6000,     // rising and the sitting between the sujoods rarely last longer than this...
   longPer: 2500,      // ...each 2.5 s more costs 1 point...
@@ -43,8 +44,11 @@ export const COST = {
   raiseLast: 2,       // ...nor in the last tashahhud
   rukuLost: 1.5,      // a ruku rarely hides the face low in the picture for long (a sujood does)
   lostLowMs: 1500,
-  sitWanted: -2,      // "first rak'ah standing": sitting down on the chair comes right before rak'ah 2's reading
+  sitWanted: -2,      // "first rak'ah standing": sitting down on the chair comes right before rak'ah 1's ruku
+                      // (ruku sitting) or right after it (ruku standing): the two sujoods are always on the chair
   sitElsewhere: 1,    // ...anywhere else it fits less well
+  noTakbeer: 2.3,     // ...a ruku done after sitting down follows a takbeer the camera can see: with none seen,
+                      // the first bow after sitting down is more likely the 1st sujood (the ruku was standing)
 };
 
 // The pause just before bow slot j (slot 3n = after the last bow, the last tashahhud).
@@ -79,16 +83,13 @@ function pauseCost(type, from, to, raises, open, qunut, sits = [], sitWanted = f
   return c;
 }
 
-function matchCost(bow, j) {
-  if (bow.virtual) return 0;
-  return j % 3 === 0 && (bow.lostLowMs || 0) >= COST.lostLowMs ? COST.rukuLost : 0;
-}
-
 // bows: [{ s, e (null while still bowed), lostLowMs, virtual, ignored }], raises: [{ t }]
 // Returns the matched pairs { a (index into the returned bows), j (slot) } in order and the cost.
 // sits: times the person sat down on the chair ("first rak'ah standing" only: mixed = true).
-// standing: how many rak'ahs (from the first) are prayed standing (0 sitting, 1 mixed, n standing).
-export function alignPrayer({ n, bows, raises = [], sits = [], mixed = false, standing = 0, t0, now }) {
+// standing: how many rak'ahs (from the first) are prayed standing with the phone seeing it (0 sitting,
+// n standing, 1 for "first rak'ah standing" with the phone seeing the person standing).
+// handsOn: the hand tool is working (a takbeer would have been seen).
+export function alignPrayer({ n, bows, raises = [], sits = [], mixed = false, standing = 0, handsOn = true, t0, now }) {
   const B = bows.filter((b) => !b.ignored);
   const m = B.length, S = 3 * n;
   const cost = Array.from({ length: m }, () => new Array(S).fill(Infinity));
@@ -97,16 +98,25 @@ export function alignPrayer({ n, bows, raises = [], sits = [], mixed = false, st
   const extras = (a, k) => { let c = 0; for (let i = a; i < k; i++) { if (B[i].virtual) return Infinity; c += COST.extra; } return c; };
   // cost of missing the slots j1..j2-1
   const missUpTo = [0];
-  const rukuMiss = (j) => (Math.floor(j / 3) < standing ? COST.missRukuStanding : COST.missRuku);
+  const rukuMiss = (j) => (Math.floor(j / 3) < standing ? COST.missRukuStanding : mixed && j === 0 ? COST.missRukuMixed : COST.missRuku);
   for (let j = 0; j < S; j++) missUpTo.push(missUpTo[j] + (j % 3 === 0 ? rukuMiss(j) : COST.miss));
   const misses = (j1, j2) => missUpTo[j2] - missUpTo[j1];
-  // the pause just before slot j: its cost (sitting down is expected before rak'ah 2's ruku, slot 3)
-  const pause = (j, from, to, open) => pauseCost(pauseType(j, n), from, to, raises, open, isQunut(j, n), sits, mixed && j === 3);
+  // the pause just before slot j: its cost (sitting down is expected before rak'ah 1's ruku, slot 0,
+  // or before its 1st sujood, slot 1)
+  const pause = (j, from, to, open) => pauseCost(pauseType(j, n), from, to, raises, open, isQunut(j, n), sits, mixed && j <= 1);
   // a stretch where bows were missed (slots j1..j2-1 not seen): if it spans the place where the
-  // person sits down (just before rak'ah 2's ruku), a sitting down inside it still fits
+  // person sits down (before rak'ah 1's ruku or 1st sujood), a sitting down inside it still fits
   const skipped = (j1, j2, from, to) => {
-    if (!mixed || !(j1 <= 3 && 3 <= j2)) return 0;
+    if (!mixed || j1 > 1) return 0;
     return sits.some((sd) => sd.t >= from && sd.t < to) ? COST.sitWanted : 0;
+  };
+  const sitAt = mixed && sits.length ? sits[0].t : null;
+  const matchCost = (bow, j) => {
+    if (bow.virtual) return 0;
+    let c = j % 3 === 0 && (bow.lostLowMs || 0) >= COST.lostLowMs ? COST.rukuLost : 0;
+    // rak'ah 1's ruku after sitting down, but no takbeer seen between them
+    if (j === 0 && sitAt != null && handsOn && bow.s > sitAt && !raises.some((r) => r.t >= sitAt && r.t < bow.s)) c += COST.noTakbeer;
+    return c;
   };
 
   for (let a = 0; a < m; a++) {

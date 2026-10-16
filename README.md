@@ -1,8 +1,9 @@
 # عدّاد الصلاة — Prayer Counter
 
 A phone web app for praying seated on a chair. The front camera watches how close the face
-comes to the phone and counts each rak'ah, ruku and sujood, with a live stopwatch for every part
-of the prayer. Everything runs on the phone; no video is recorded or sent anywhere.
+(and the shoulders) come to the phone and counts each rak'ah, ruku and sujood, with a live
+stopwatch for every part of the prayer. Everything runs on the phone; no video is recorded or
+sent anywhere.
 
 - `docs/` — the app (served by GitHub Pages).
 - `CHANGELOG.md` — what changed in each version (v1, v2, ...).
@@ -11,3 +12,6 @@ of the prayer. Everything runs on the phone; no video is recorded or sent anywhe
 - Test mode without a camera: open the app with `?sim`.
 - `docs/align.js` — matches the bows and hand raises to the steps of the prayer.
 - Tests: `node tests/align.test.mjs`. Real prayer records go in `tests/records/` (kept on this PC only).
+  In the browser (`?sim`): paste `tests/browser-regression.js` (simulated prayers),
+  `tests/browser-replay.js` (replays a record through the whole app) and
+  `tests/browser-old-sims.js` (exact step-by-step comparison of two versions).

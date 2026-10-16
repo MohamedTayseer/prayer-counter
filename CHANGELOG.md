@@ -4,6 +4,38 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v8 — first rak'ah standing with the phone set for sitting, and shoulders
+- "أول ركعة واقف" now works with the phone on a table in front, set for
+  sitting (at arm's length). It does not need to see you standing:
+  - The face is learned while sitting. Then the screen says "قوم اقف وكبّر":
+    the prayer clock starts the moment you stand up (the face leaves the top
+    of the picture). While you stand, the screen shows "واقف" and the reading
+    of rak'ah 1.
+  - Sitting down on the chair is seen when the face comes back and settles
+    there (it does not have to be exactly where it was at the start). A bow
+    counts only after that, so sitting down itself is never counted as a bow;
+    sitting down and going straight into sujood is still counted.
+  - Both ways of rak'ah 1 work: ruku standing and then sitting down, or
+    sitting down and then ruku on the chair. The two sujoods are on the chair.
+  - A standing ruku is usually out of the picture: it is shown as "—" and
+    counted anyway. If the face comes into the picture for a moment and goes
+    back up, that is counted as the standing ruku.
+  - A prayer started by raising your hands (phone that sees you standing)
+    is watched as in v7; only the matching now expects sitting down before
+    the sujoods of rak'ah 1, as they are always on the chair.
+- Shoulders: a new body tool watches the shoulders alongside the face and the
+  hands. A bow counts when the face OR the shoulders lean into it, so a small
+  ruku that the face hardly shows is caught. When the face is hidden in a
+  sujood, the shoulders coming back up end the sujood on time.
+- The phone placement check shows a line across the shoulders and says
+  "مش شايف كتافك. ابعد الموبايل شوية أو وطّيه." when they are not in the
+  picture.
+- The sensitivity for "first rak'ah standing" is kept on its own.
+- The prayer record adds the shoulders' lean to each sample, and the events
+  "stood up", "face back", "sat down", "ruku (standing)", "near (shoulders)".
+- Sitting and standing prayers count exactly as in v7 (checked with the same
+  simulated prayers and the real record).
+
 ## v7 — the whole prayer is matched at once
 - Found from a real record (Asr test, 16 Oct): the camera saw all 12 bows
   correctly, but the one-at-a-time corrections of v4/v5 made things worse
