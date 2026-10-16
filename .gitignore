@@ -6,3 +6,5 @@ docs/qr.html
 .claude/
 __pycache__/
 prayer-counter-qr.jpg
+# real prayer records (dates and times of prayers): kept on this PC only
+tests/records/

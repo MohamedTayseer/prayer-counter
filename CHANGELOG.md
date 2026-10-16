@@ -4,6 +4,28 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v7 — the whole prayer is matched at once
+- Found from a real record (Asr test, 16 Oct): the camera saw all 12 bows
+  correctly, but the one-at-a-time corrections of v4/v5 made things worse
+  (the face leaving the top of the picture when standing up from ruku was
+  taken as a sujood, and every label after it shifted).
+- New way: the bows and hand raises seen so far are matched against the shape
+  of the prayer as a whole: the order, the rhythm of the pauses (reading and
+  tashahhud long, rising and sitting short) and where the hands go up. A missed
+  or extra bow is accepted only when that clearly fits better; otherwise bows
+  are simply counted in order. Earlier steps are corrected too, not only the
+  current one.
+- A face that leaves the picture at standing height (through the top) means
+  standing up, not a sujood.
+- "First rak'ah standing": sitting down on the chair is recognised (face drops
+  far without coming closer, then rests) and is not counted as a bow.
+- The camera screen warns when the face sits at the top edge of the picture.
+- Fix buttons during the prayer are now "فاتتك حركة" (add a bow the camera
+  missed) and "حسبت زيادة" (remove the last bow).
+- The prayer record has a new MATCH line: what each bow was counted as.
+- Tests: `node tests/align.test.mjs` (includes a moment-by-moment replay of the
+  real record when it is on the PC).
+
 ## v6 — phone placement check
 - New button on the start screen: "اختبر مكان الموبايل وإيديك". It opens the
   camera with a box on the face and dots on the hands, and says what it sees

@@ -9,3 +9,5 @@ of the prayer. Everything runs on the phone; no video is recorded or sent anywhe
 - `serve_https.py` — serve the app over https on the home Wi-Fi for testing
   (needs a self-signed certificate in `https/`, not uploaded).
 - Test mode without a camera: open the app with `?sim`.
+- `docs/align.js` — matches the bows and hand raises to the steps of the prayer.
+- Tests: `node tests/align.test.mjs`. Real prayer records go in `tests/records/` (kept on this PC only).
