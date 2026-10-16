@@ -8,3 +8,5 @@ __pycache__/
 prayer-counter-qr.jpg
 # real prayer records (dates and times of prayers): kept on this PC only
 tests/records/
+# private notes about the user and plans: kept on this PC only
+notes/
