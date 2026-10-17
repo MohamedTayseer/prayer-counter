@@ -13,9 +13,9 @@
 // comes back and settles at its sitting place.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 8;
+const APP_VERSION = 9;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=21";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=22";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -61,7 +61,12 @@ const CALIB_MS = 3000;       // sit straight this long to learn the normal face 
 const NEAR_HOLD_MS = 200;    // must stay near this long to count
 const FAR_HOLD_MS = 300;     // must stay far this long to count
 const LOST_AS_NEAR_MS = 500; // face gone this long after growing = still leaning in
+// Head turns are measured from the person's own "facing the phone" turn (the phone may stand a
+// little to one side, or the face tool may lean one way): see noteYaw.
 const SALAM_YAW = 0.3;       // how far the head must turn for the salam
+const SALAM_YAW2 = 0.22;     // ...the turn to the other side, once one side was seen, needs a bit less
+const SALAM_KEEP = 0.65;     // a turn going on stays a turn down to this share of what it needed
+const SALAM_GAP_MS = 8000;   // the two turns of the salam come within this time of each other
 const SALAM_LOST_YAW = 0.15; // face lost right after turning at least this far = a turn to that side
 const SALAM_HOLD_MS = 200;
 const SALAM_ARM_MS = 1000;   // salam is only watched 1 s into the last tashahhud
@@ -160,7 +165,8 @@ const stand = { on: false, used: false, visit: null };
 // Shoulders from the body tool: sy = their middle height, sw = the width between them (both as
 // shares of the picture height), home = the same while upright, score = how far into a lean.
 const sh = { seen: false, sy: 0, sw: 0, home: null, score: 0, lastSeen: 0 };
-const sal = { side: 0, since: 0, first: 0, firstAt: 0 };
+// base = the head turn while facing the phone: the middle value of the last 10 s while upright
+const sal = { side: 0, since: 0, first: 0, firstAt: 0, base: 0, yaws: [], yawAt: 0 };
 // up = a raise is going on (both hands up); a new raise needs the hands to come down first.
 // rukuSoon = the takbeer before ruku was seen in this reading step.
 const hands = { since: 0, up: false, downSince: 0, rukuSoon: null };
@@ -175,7 +181,7 @@ function resetTracking() {
   obs.bows = []; obs.raises = []; obs.sits = [];
   Object.assign(stand, { on: false, used: false, visit: null });
   Object.assign(sh, { seen: false, sy: 0, sw: 0, home: null, score: 0, lastSeen: 0 });
-  Object.assign(sal, { side: 0, since: 0, first: 0, firstAt: 0 });
+  Object.assign(sal, { side: 0, since: 0, first: 0, firstAt: 0, base: 0, yaws: [], yawAt: 0 });
   Object.assign(hands, { since: 0, up: false, downSince: 0, rukuSoon: null });
   rec.reset();
 }
@@ -230,6 +236,7 @@ function onObservation(w, yaw, t, handsUp = false, pos = null, shoulders = null)
     det.lastYaw = yaw;
     det.yawHist.push([t, yaw]);
     while (det.yawHist.length && t - det.yawHist[0][0] > 700) det.yawHist.shift();
+    noteYaw(yaw, t);
     det.pos = det.pos && !fresh ? { cx: det.pos.cx * 0.5 + p.cx * 0.5, cy: det.pos.cy * 0.5 + p.cy * 0.5, h: det.pos.h * 0.5 + p.h * 0.5 } : { ...p };
   }
   trackShoulders(shoulders, t);
@@ -588,8 +595,9 @@ function matchText() {
 
 // ---------- record of each prayer, to check a missed step afterwards ----------
 // 4 samples a second: time (tenths of a second): size vs upright (%), lean score (%),
-// face height in the picture (%), head turn (%), bowed (1/0), shoulders' lean score (%).
-// Size and height are -1 when no face, the shoulders' score when they are not seen.
+// face height in the picture (%), head turn (%), bowed (1/0), shoulders' lean score (%), hands seen.
+// Size and height are -1 when no face, the shoulders' score when they are not seen, hands when
+// the hand tool is not running.
 const rec = {
   t0: 0, lastAt: 0, samples: [], events: [],
   reset() { this.t0 = 0; this.lastAt = 0; this.samples = []; this.events = []; },
@@ -602,7 +610,8 @@ const rec = {
     const size = seen ? Math.round((det.lastSize / det.valley) * 100) : -1;
     const cy = seen && det.pos ? Math.round(det.pos.cy * 100) : -1;
     const shs = sh.seen && sh.home ? Math.round(sh.score * 100) : -1;
-    this.samples.push(`${this.rel(t)}:${size},${Math.round(det.score * 100)},${cy},${Math.round(det.lastYaw * 100)},${det.pose === "near" ? 1 : 0},${shs}`);
+    const hc = handDetector && wantHands() ? lastHandCount : -1;
+    this.samples.push(`${this.rel(t)}:${size},${Math.round(det.score * 100)},${cy},${Math.round(det.lastYaw * 100)},${det.pose === "near" ? 1 : 0},${shs},${hc}`);
   },
   event(t, what) { if (this.t0) this.events.push(`${this.rel(t)}:${what}`); },
 };
@@ -696,21 +705,43 @@ function removeLastBow(t) {
   realign(t);
 }
 
+// The person's own "facing the phone" head turn: the middle value of the last 10 s while upright
+// (4 a second; not while a salam turn is going on). Salam turns are measured from it.
+function noteYaw(yaw, t) {
+  if (t - sal.yawAt < 250 || sal.side !== 0) return;
+  const upright = app.mode === "calib" || app.mode === "takbeer"
+    || (app.mode === "pray" && !stand.on && det.pose === "far" && det.score < 1);
+  if (!upright) return;
+  sal.yawAt = t;
+  sal.yaws.push(yaw);
+  if (sal.yaws.length > 40) sal.yaws.shift();
+  const sorted = [...sal.yaws].sort((a, b) => a - b);
+  sal.base = sorted[Math.floor(sorted.length / 2)];
+}
+
+// Salam: the head turns to one side, then to the other. A turn going on stays a turn down to a bit
+// less than it needed (the face tool wobbles), and the second side needs a bit less than the first.
 function salamCheck(seen, yaw, t) {
   const cur = app.steps[app.ptr];
   if (!cur.last || t - app.starts[app.ptr] < SALAM_ARM_MS) return;
+  const pending = sal.first && t - sal.firstAt < SALAM_GAP_MS; // the first turn was just seen
+  const need = (s) => (pending && s === -sal.first ? SALAM_YAW2 : SALAM_YAW);
   let side = 0;
-  if (seen) side = yaw > SALAM_YAW ? 1 : yaw < -SALAM_YAW ? -1 : 0;
-  else if (t - det.lastSeen > 300) {
+  if (seen) {
+    const rel = yaw - sal.base;
+    if (sal.side && Math.sign(rel) === sal.side && Math.abs(rel) > need(sal.side) * SALAM_KEEP) side = sal.side;
+    else side = rel > need(1) ? 1 : rel < -need(-1) ? -1 : 0;
+  } else if (t - det.lastSeen > 300) {
     // the face tool often loses a face turned far away: use the strongest turn just before
-    const strongest = det.yawHist.reduce((a, [, y]) => (Math.abs(y) > Math.abs(a) ? y : a), 0);
+    const strongest = det.yawHist.reduce((a, [, y]) => (Math.abs(y - sal.base) > Math.abs(a) ? y - sal.base : a), 0);
     if (Math.abs(strongest) > SALAM_LOST_YAW) side = Math.sign(strongest);
   }
 
   if (side !== sal.side) { sal.side = side; sal.since = t; return; }
   if (side === 0 || t - sal.since < SALAM_HOLD_MS) return;
-  if (!sal.first || side === sal.first) { sal.first = side; sal.firstAt = t; }
-  else if (t - sal.firstAt < 20000) finish(t, "salam");
+  if (pending && side === -sal.first) return finish(t, "salam");
+  if (sal.first !== side) rec.event(t, `salam turn ${side > 0 ? "+" : "-"}`);
+  sal.first = side; sal.firstAt = t;
 }
 
 // ---------- sound: spoken words (built into the phone, no internet) or a tone ----------
@@ -1012,6 +1043,7 @@ function frame() {
           lastHandRes = handDetector.detectForVideo(video, performance.now());
           lastHandsUp = handsRaised(lastHandRes, box, video);
           lastHandCount = lastHandRes?.landmarks?.length || 0;
+          noteHands(lastHandRes, box, video, lastHandsUp, t);
         }
         handsUp = lastHandsUp;
         if (handsUp) diag.handsUp++;
@@ -1052,6 +1084,41 @@ function handsRaised(res, faceBox, video) {
     else if (side >= 0.45 && side <= 2.5) right = true;
   }
   return left && right;
+}
+
+// For the record: each time two hands come up above the chest, how long and where they were at
+// their highest, and whether it counted as a raise - to see why a takbeer was or was not seen.
+// Places are from the middle of the face, in face widths (x) and face heights (y, + = lower);
+// a raise needs both hands 0.45-2.5 widths out to the side and y between -1.0 and +1.1.
+const handLog = { since: 0, last: 0, counted: false, best: null };
+function handPair(res, faceBox, video) {
+  const list = res?.landmarks;
+  if (!faceBox || !list || list.length < 2) return null;
+  const W = video.videoWidth || 640, H = video.videoHeight || 480;
+  const fcx = (faceBox.originX + faceBox.width / 2) / W, fcy = (faceBox.originY + faceBox.height / 2) / H;
+  const fw = faceBox.width / W, fh = faceBox.height / H;
+  const at = list.slice(0, 2).map((pts) => ({
+    x: (pts.reduce((a, p) => a + p.x, 0) / pts.length - fcx) / fw,
+    y: (pts.reduce((a, p) => a + p.y, 0) / pts.length - fcy) / fh,
+  })).sort((a, b) => a.x - b.x);
+  const low = Math.max(at[0].y, at[1].y);
+  if (low > 3) return null; // in the lap, not raised
+  return { low, text: at.map((p) => `(${p.x.toFixed(1)},${p.y.toFixed(1)})`).join("") };
+}
+function noteHands(res, faceBox, video, counted, t) {
+  if (app.mode !== "pray" || !rec.t0) return;
+  const pair = handPair(res, faceBox, video);
+  if (pair) {
+    if (!handLog.since) Object.assign(handLog, { since: t, counted: false, best: null });
+    handLog.last = t;
+    handLog.counted ||= counted;
+    if (!handLog.best || pair.low < handLog.best.low) handLog.best = pair;
+  } else if (handLog.since && t - handLog.last > 400) flushHands(t);
+}
+function flushHands(t) {
+  if (!handLog.since) return;
+  rec.event(t, `hands up ${((handLog.last - handLog.since) / 1000).toFixed(1)}s ${handLog.best.text}${handLog.counted ? " = raise" : ""}`);
+  handLog.since = 0;
 }
 
 function pickFace(list) {
@@ -1226,7 +1293,8 @@ function finish(t, how) {
   const segs = app.steps.slice(0, app.ptr + 1).map((s, i) => ({
     g: s.g, label: s.label, start: app.starts[i], end: app.starts[i + 1] ?? t,
   }));
-  rec.event(t, `end ${how}`);
+  flushHands(t);
+  rec.event(t, `end ${how} (facing ${sal.base.toFixed(2)})`);
   const entry = {
     id: app.t0, v: APP_VERSION, key: app.key, name: p.name, n: p.n, place: settings.place, posture: settings.posture,
     t0: app.t0, end: t, how, segs,
@@ -1245,7 +1313,7 @@ function traceText(r) {
   const head = `prayer-counter v${r.v ?? "?"} ${r.name} ${new Date(r.t0).toISOString()} posture=${r.posture} place=${r.place} sens=${r.trace.sens}`;
   const steps = r.segs.map((s, i) => `${i}:${s.label}=${((s.end - s.start) / 1000).toFixed(1)}s`).join(" | ");
   const match = r.trace.match ? `\nMATCH ${r.trace.match}` : "";
-  const fields = (r.v ?? 0) >= 8 ? "t:size,score,y,turn,bowed,shoulders" : "t:size,score,y,turn,bowed";
+  const fields = ["t:size,score,y,turn,bowed", "t:size,score,y,turn,bowed,shoulders", "t:size,score,y,turn,bowed,shoulders,hands"][Math.max(0, Math.min(2, (r.v ?? 0) - 7))];
   return `${head}\nSTEPS ${steps}\nEVENTS ${r.trace.events}${match}\nSAMPLES ${fields} ${r.trace.samples}`;
 }
 
@@ -1497,6 +1565,8 @@ if (SIM) {
     stand: () => stand,
     sh: () => sh,
     shouldersOf: (res, video) => shouldersOf(res, video),
+    noteHands: (res, box, video, counted, t) => noteHands(res, box, video, counted, t),
+    sal: () => sal,
     diag: () => diag,
     match: () => app.match,
     draw: (box, handRes, video, bothUp, shoulders) => drawOverlay(box, handRes, video, bothUp, shoulders),

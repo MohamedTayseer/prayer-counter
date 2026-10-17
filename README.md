@@ -13,5 +13,6 @@ sent anywhere.
 - `docs/align.js` — matches the bows and hand raises to the steps of the prayer.
 - Tests: `node tests/align.test.mjs`. Real prayer records go in `tests/records/` (kept on this PC only).
   In the browser (`?sim`): paste `tests/browser-regression.js` (simulated prayers),
-  `tests/browser-replay.js` (replays a record through the whole app) and
-  `tests/browser-old-sims.js` (exact step-by-step comparison of two versions).
+  `tests/browser-replay.js` (replays a record through the whole app),
+  `tests/browser-old-sims.js` (exact step-by-step comparison of two versions) and
+  `tests/browser-salam.js` (salam with the face turned a little at rest).

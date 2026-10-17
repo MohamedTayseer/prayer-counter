@@ -6,8 +6,11 @@
 // sizes are rebuilt from a guessed starting size V0; the face height is guessed as w * hk.
 // Try a few guesses (e.g. V0/hk = 0.06/1.0, 0.075/1.33, 0.09/1.47). raises = hand-raise times
 // (ms after the start) taken from the record's EVENTS.
-window.replayRecord = async (S, V0, hk, raises, prayer, posture) => {
+// opts.yawNoise: add this much random wobble to the head turn on every frame (the record keeps only
+// 4 values a second; the real values between them wobble), opts.seed: start of the random numbers.
+window.replayRecord = async (S, V0, hk, raises, prayer, posture, opts = {}) => {
   localStorage.clear();
+  let rnd = opts.seed || 7; const wobble = () => { rnd = (rnd * 16807) % 2147483647; return ((rnd / 2147483647) - 0.5) * 2 * (opts.yawNoise || 0); };
   const samples = S.trim().split(" ").map((x) => { const [t, rest] = x.split(":"); const [size, , y, turn, bowed] = rest.split(",").map(Number); return { t: Number(t) * 100, size, y, turn, bowed }; });
   let V = V0, lastSeenBowed = null; const frames = [];
   samples.forEach((s, i) => {
@@ -31,7 +34,7 @@ window.replayRecord = async (S, V0, hk, raises, prayer, posture) => {
     for (let t = f.t; t < next; t += 100) {
       curT = t;
       const hands = raises.some((r) => t >= r && t < r + 600);
-      __pc.feed(f.w, f.yaw, t0 + t, hands, f.w == null ? null : { cx: 0.5, cy: f.cy, h: f.w * hk });
+      __pc.feed(f.w, f.yaw + wobble(), t0 + t, hands, f.w == null ? null : { cx: 0.5, cy: f.cy, h: f.w * hk });
       const st = __pc.state();
       const label = st.mode === "pray" ? `${st.step} ${st.group}` : st.mode;
       if (label !== lastLabel) { shown.push(`${(t / 1000).toFixed(1)} ${label}`); lastLabel = label; }

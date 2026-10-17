@@ -4,6 +4,20 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v9 — the salam is seen more surely
+- Found from a real record (Asr, 17 Oct): the salam was not seen and the
+  prayer had to be ended with the button. Even when facing the phone, the
+  face read as turned a little to one side, so the turn to the other side
+  only just reached the limit.
+- Head turns are now measured from your own "facing the phone" position,
+  learned during the prayer. Once the first turn is seen, the turn to the
+  other side needs a bit less, and a small wobble in the middle of a turn no
+  longer cancels it. The two turns must come within 8 seconds of each other.
+- The prayer record now notes each time both hands come up (how long, and
+  where they were next to the face), to find out why the takbeer before
+  ruku and before rak'ah 3 is not seen. It also records how many hands were
+  seen in each sample, and your "facing" value at the end.
+
 ## v8 — first rak'ah standing with the phone set for sitting, and shoulders
 - "أول ركعة واقف" now works with the phone on a table in front, set for
   sitting (at arm's length). It does not need to see you standing:
