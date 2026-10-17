@@ -11,11 +11,13 @@
 // "First rak'ah standing": the phone is set for sitting, so standing up takes the face out through
 // the top of the picture. The clock starts then; sitting down on the chair is seen when the face
 // comes back and settles at its sitting place.
+// Standing prayer: from a phone on the floor the face is too small, so the body tool is the main
+// eye: the bend of the back, the arms and the head turn (see bodyStep).
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 9;
+const APP_VERSION = 10;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=22";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=23";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -44,7 +46,7 @@ const POSTURE_KEY = "prayerCounter.posture";
 const POSTURES = {
   sit: { name: "قاعد على الكرسي", calib: "اقعد مستقيم وبص للموبايل" },
   stand: { name: "واقف", calib: "اقف مستقيم وبص للموبايل",
-    hint: "حط الموبايل على الأرض قدام مكان السجود، مسنود لورا علشان يشوفك وانت واقف." },
+    hint: "حط الموبايل على الأرض بعد مكان السجود بشوية، مسنود لورا، وابعد لحد ما جسمك كله يبان في الصورة." },
   mixed: { name: "أول ركعة واقف", calib: "اقعد مستقيم على الكرسي وبص للموبايل",
     hint: "حط الموبايل قدامك على ترابيزة، مظبوط عليك وانت قاعد. العدّ بيبدأ لما تقوم تقف." },
 };
@@ -89,6 +91,15 @@ const SH_DOWN = 0.5;
 const SH_GROW = 0.3;
 const SH_FAR = 0.4;          // shoulders back to this little lean = upright again
 const SH_NEAR_LOST = 0.6;    // face gone and shoulders this far into a lean = bowed
+// standing prayer: the body tool is the main eye (the face is too small from the floor)
+const BODY_NEAR = 45;        // the back bent this far from standing (degrees) = bowed
+const BODY_UPRIGHT = 30;     // back to this little = upright (standing, or sitting on the floor); a raise
+                             // counts only this upright
+const BODY_LOST_MS = 800;    // body gone this long while bending on the way down (sujood) = bowed
+const BODY_LOST_LEAN = 36;   // ...bent at least this far, and still going down (8 degrees in the last
+                             // 1.2 s), when it was lost
+const BODY_RISE = 60;        // upright again also when coming up this much from the deepest bend of the
+                             // bow, or to 40% of it (sitting up from sujood while leaning forward a little)
 
 const SIM = new URLSearchParams(location.search).has("sim"); // test mode: no camera, feed values by hand
 let simNow = 0;
@@ -170,6 +181,10 @@ const sal = { side: 0, since: 0, first: 0, firstAt: 0, base: 0, yaws: [], yawAt:
 // up = a raise is going on (both hands up); a new raise needs the hands to come down first.
 // rukuSoon = the takbeer before ruku was seen in this reading step.
 const hands = { since: 0, up: false, downSince: 0, rukuSoon: null };
+// Standing prayer by the body tool. use = the body is the main eye for this prayer (null = not
+// decided yet); ref = the direction of the back while standing (3D, from the hips to the
+// shoulders); lean = how far the back is bent from it now (degrees); last = the body last seen.
+const body = { use: null, ref: null, calib: [], calibStart: 0, calibMiss: 0, seen: false, lastSeen: 0, yawAt: 0, lean: 0, peak: 0, leans: [], last: null };
 
 function resetTracking() {
   Object.assign(det, {
@@ -183,6 +198,7 @@ function resetTracking() {
   Object.assign(sh, { seen: false, sy: 0, sw: 0, home: null, score: 0, lastSeen: 0 });
   Object.assign(sal, { side: 0, since: 0, first: 0, firstAt: 0, base: 0, yaws: [], yawAt: 0 });
   Object.assign(hands, { since: 0, up: false, downSince: 0, rukuSoon: null });
+  Object.assign(body, { use: null, ref: null, calib: [], calibStart: 0, calibMiss: 0, seen: false, lastSeen: 0, yawAt: 0, lean: 0, peak: 0, leans: [], last: null });
   rec.reset();
 }
 
@@ -223,8 +239,8 @@ function followShoulders() {
 
 // w = face width as a share of the picture width (null = no face), yaw = head turn (-1..1 roughly),
 // handsUp = a hand is raised beside the face, pos = face centre and height as shares of the picture,
-// shoulders = { sy, sw } from the body tool (null = not seen)
-function onObservation(w, yaw, t, handsUp = false, pos = null, shoulders = null) {
+// shoulders = { sy, sw } from the body tool (null = not seen), b = the whole body (bodyOf; null = not seen)
+function onObservation(w, yaw, t, handsUp = false, pos = null, shoulders = null, b = null) {
   det.seen = w != null;
   if (w != null) {
     const p = pos || { cx: 0.5, cy: 0.45, h: w };
@@ -233,25 +249,150 @@ function onObservation(w, yaw, t, handsUp = false, pos = null, shoulders = null)
     det.lastSeen = t;
     det.raw = { ...p };
     det.ema = det.ema && !fresh ? det.ema * 0.5 + w * 0.5 : w;
-    det.lastYaw = yaw;
-    det.yawHist.push([t, yaw]);
-    while (det.yawHist.length && t - det.yawHist[0][0] > 700) det.yawHist.shift();
-    noteYaw(yaw, t);
     det.pos = det.pos && !fresh ? { cx: det.pos.cx * 0.5 + p.cx * 0.5, cy: det.pos.cy * 0.5 + p.cy * 0.5, h: det.pos.h * 0.5 + p.h * 0.5 } : { ...p };
   }
+  body.seen = b != null;
+  if (b) {
+    body.lastSeen = t; body.last = b;
+    if (body.ref) {
+      body.lean = leanOf(b);
+      body.leans.push([t, body.lean]);
+      while (body.leans.length && t - body.leans[0][0] > 1200) body.leans.shift();
+    }
+  }
+  if (app.mode === "calib" || app.mode === "check") decideBody(b, w);
+  // standing prayer by the body: its arms are the hands and its head turn is the turn (nothing
+  // while it is still being decided, so the face's and the body's turns are never mixed)
+  if (body.use) handsUp = !!(b && b.raised);
+  const turn = body.use ? (b ? b.yaw : null) : body.use === false && w != null ? yaw : null; // (b.yaw: null without the head)
+  if (turn != null) {
+    if (body.use) body.yawAt = t;
+    det.lastYaw = turn;
+    det.yawHist.push([t, turn]);
+    while (det.yawHist.length && t - det.yawHist[0][0] > 700) det.yawHist.shift();
+    noteYaw(turn, t);
+  }
   trackShoulders(shoulders, t);
-  if (app.mode === "calib") return calibStep(w, t);
+  if (app.mode === "calib") return body.use ? bodyCalibStep(b, t) : body.use === false ? calibStep(w, t) : bodyWaitMsg();
   if (app.mode === "takbeer") return takbeerStep(handsUp && uprightNow(), t, w);
   if (app.mode !== "pray") return;
 
-  if (stand.on && w != null) startVisit(t); // the face is back after standing
-  if (!stand.on) bowStep(w, t);
+  if (body.use) bodyStep(b, t);
+  else {
+    if (stand.on && w != null) startVisit(t); // the face is back after standing
+    if (!stand.on) bowStep(w, t);
+  }
 
   const raiseAt = handsEdge(handsUp && uprightNow(), t);
   if (raiseAt) onRaise(raiseAt, t);
   if (t - app.alignedAt >= 1000) realign(t); // pauses keep growing: the best match can change with time
-  salamCheck(w != null, yaw, t);
+  salamCheck(body.use ? b?.yaw != null : w != null, det.lastYaw, t);
   rec.sample(t);
+}
+
+// ---------- standing prayer: the body tool is the main eye ----------
+// From a phone on the floor the face is too small for the face tool, but the body tool sees the
+// whole person. How far the back is bent from standing - the 3D line from the hips to the
+// shoulders, whatever angle the phone looks from - tells upright (standing, or sitting on the
+// floor) from bowed (ruku, sujood). Both wrists above the shoulders = a raise; the nose between
+// the ears = the head turn for the salam.
+
+// Is the body tool the main eye for this prayer? Only for a standing prayer, and only when the
+// body tool works on this phone (in the test mode: the first frame with a body or a face decides).
+// Waits while it loads. Its head turns start the "facing the phone" value afresh.
+function decideBody(b, w) {
+  if (body.use != null) return;
+  if (settings.posture !== "stand") body.use = false;
+  else if (SIM) { if (b) body.use = true; else if (w != null) body.use = false; }
+  else if (poseDetector) body.use = true;
+  else if (diag.pose !== "loading") body.use = false; // no body tool here: the face does it, as before
+  if (body.use) sal.yaws = [];
+}
+function bodyWaitMsg() {
+  $("calibMsg").textContent = "ثانية… أداة الجسم بتتحمّل";
+  $("calibBar").style.width = "0%";
+}
+function leanOf(b) {
+  const r = body.ref, u = b.up;
+  const c = Math.max(-1, Math.min(1, r.x * u.x + r.y * u.y + r.z * u.z));
+  return (Math.acos(c) * 180) / Math.PI;
+}
+
+// Learn the standing back: 3 s standing still with the shoulders and the hips in the picture.
+function bodyCalibStep(b, t) {
+  const msg = $("calibMsg");
+  if (!b || !b.hips) {
+    // a moment without it (the tool flickers) does not start the learning again
+    if (!body.calibMiss) body.calibMiss = t;
+    if (t - body.calibMiss > 700) { body.calib = []; body.calibStart = 0; $("calibBar").style.width = "0%"; }
+    msg.textContent = !b ? "مش شايفك. اقف قدام الموبايل بحيث يبان جسمك كله." : "مش شايف وسطك. ابعد شوية أو ميّل الموبايل لورا.";
+    return;
+  }
+  body.calibMiss = 0;
+  if (!body.calibStart) body.calibStart = t;
+  body.calib.push(b.up);
+  const p = Math.min(1, (t - body.calibStart) / CALIB_MS);
+  $("calibBar").style.width = `${Math.round(p * 100)}%`;
+  const left = Math.ceil((CALIB_MS - (t - body.calibStart)) / 1000);
+  msg.textContent = left > 0 ? `${POSTURES.stand.calib}… ${ar(left)}` : "تمام";
+  if (p >= 1 && body.calib.length >= 8) {
+    const s = body.calib.reduce((a, u) => ({ x: a.x + u.x, y: a.y + u.y, z: a.z + u.z }), { x: 0, y: 0, z: 0 });
+    const n = Math.hypot(s.x, s.y, s.z) || 1;
+    body.ref = { x: s.x / n, y: s.y / n, z: s.z / n };
+    body.lean = leanOf(b);
+    waitForTakbeer();
+  }
+}
+
+// Upright ("far") or bowed ("near") from the bend of the back, with the same holds and twitch
+// rules as the face. The body lost for a moment while bending (in a sujood) = bowed.
+function bodyStep(b, t) {
+  const bow = obs.bows[obs.bows.length - 1];
+  let want = det.pose;
+  if (b) {
+    if (det.pose === "near") body.peak = Math.max(body.peak, body.lean);
+    // upright again: as upright as a raise needs - or well up from the deepest bend of this bow
+    // (sitting up from sujood while still leaning forward a little)
+    const farAt = Math.max(BODY_UPRIGHT, body.peak - BODY_RISE, body.peak * 0.4);
+    if (det.pose === "far" && body.lean >= BODY_NEAR) want = "near";
+    else if (det.pose === "near" && body.lean <= farAt) want = "far";
+  } else {
+    // body lost: on the way down into a sujood (bent far, still going down) it is a bow; otherwise
+    // wait for it (a frame or two without it does not cancel a move that is going on)
+    const before = body.leans.length ? body.leans[0][1] : body.lean;
+    const goingDown = body.lean >= BODY_LOST_LEAN && body.lean - before >= 8;
+    if (det.pose === "far" && t - body.lastSeen > BODY_LOST_MS && goingDown) want = "near";
+    else return;
+  }
+
+  if (want !== det.pose) {
+    if (det.cand !== want) { det.cand = want; det.candSince = t; }
+    else if (t - det.candSince >= (want === "near" ? NEAR_HOLD_MS : FAR_HOLD_MS)) {
+      const moveStart = det.candSince;
+      det.pose = want; det.cand = null;
+      if (want === "near") {
+        const raisedSince = bow && obs.raises.some((r) => r.t >= bow.e - 200); // a raise proves the rise was real
+        if (bow && bow.e != null && !bow.virtual && !bow.ignored && !raisedSince && moveStart - bow.e < MIN_RISE_MS) {
+          bow.e = null; // the rise before was too short to be real: the bow before goes on
+          rec.event(t, "undo: short rise");
+        } else {
+          obs.bows.push({ s: moveStart, e: null, lostLowMs: 0, lostSince: 0 });
+          body.peak = body.lean;
+          rec.event(t, "near (body)");
+        }
+      } else {
+        const open = obs.bows[obs.bows.length - 1];
+        if (open && open.e == null && !open.virtual && moveStart - open.s < MIN_BOW_MS) {
+          obs.bows.pop(); // too short to be a ruku or sujood: a twitch
+          rec.event(t, "undo: short bow");
+        } else {
+          if (open && open.e == null) open.e = moveStart;
+          rec.event(t, "far (body)");
+        }
+      }
+      realign(t);
+    }
+  } else det.cand = null;
 }
 
 // Upright ("far") or bowed ("near"), from the face and the shoulders. Each move is measured from
@@ -509,6 +650,7 @@ function satDown(size, t) {
 
 // The person is upright (seen from the face) - needed before a hand raise can count.
 function uprightNow() {
+  if (body.use) return body.seen && body.ref != null && body.lean < BODY_UPRIGHT;
   if (!det.seen || !det.valley) return false;
   if (det.pose === "far") return det.score < 1;
   return det.lastSize <= (det.prevValley || det.valley) * (1 + (settings.sens - 1) * 0.6);
@@ -597,7 +739,8 @@ function matchText() {
 // 4 samples a second: time (tenths of a second): size vs upright (%), lean score (%),
 // face height in the picture (%), head turn (%), bowed (1/0), shoulders' lean score (%), hands seen.
 // Size and height are -1 when no face, the shoulders' score when they are not seen, hands when
-// the hand tool is not running.
+// the hand tool is not running. Standing prayer by the body: the back's bend (degrees, -1 = no
+// body) and arms raised (1/0); the head turn is then the body's.
 const rec = {
   t0: 0, lastAt: 0, samples: [], events: [],
   reset() { this.t0 = 0; this.lastAt = 0; this.samples = []; this.events = []; },
@@ -611,7 +754,9 @@ const rec = {
     const cy = seen && det.pos ? Math.round(det.pos.cy * 100) : -1;
     const shs = sh.seen && sh.home ? Math.round(sh.score * 100) : -1;
     const hc = handDetector && wantHands() ? lastHandCount : -1;
-    this.samples.push(`${this.rel(t)}:${size},${Math.round(det.score * 100)},${cy},${Math.round(det.lastYaw * 100)},${det.pose === "near" ? 1 : 0},${shs},${hc}`);
+    const bl = body.use && body.seen ? Math.round(body.lean) : -1;
+    const arms = body.use && body.seen && body.last?.raised ? 1 : 0;
+    this.samples.push(`${this.rel(t)}:${size},${Math.round(det.score * 100)},${cy},${Math.round(det.lastYaw * 100)},${det.pose === "near" ? 1 : 0},${shs},${hc},${bl},${arms}`);
   },
   event(t, what) { if (this.t0) this.events.push(`${this.rel(t)}:${what}`); },
 };
@@ -619,13 +764,15 @@ const rec = {
 // Is the hand detector needed on this frame? Everywhere except the last tashahhud (and while
 // standing out of the picture).
 function wantHands() {
+  if (body.use) return false; // standing prayer by the body: its arms are watched instead
   if (app.mode === "takbeer" || app.mode === "calib" || app.mode === "check") return true;
   return app.mode === "pray" && !stand.on && !app.steps[app.ptr]?.last;
 }
-// The body tool: during the prayer (not while standing out of the picture), and in the placement
-// check to show the shoulders.
+// The body tool: during the prayer (not while standing out of the picture), in the placement
+// check, and from the start when it is the main eye (standing prayer).
 function wantPose() {
   if (app.mode === "check") return true;
+  if (body.use !== false && settings.posture === "stand" && (app.mode === "calib" || app.mode === "takbeer")) return true;
   return app.mode === "pray" && !stand.on;
 }
 
@@ -670,7 +817,8 @@ function waitForTakbeer() {
 function takbeerMsg() {
   const msg = $("calibMsg");
   if (settings.posture === "mixed") msg.textContent = "قوم اقف وكبّر. العدّ هيبدأ أول ما تقوم.";
-  else if (diag.hands === "loading") msg.textContent = "ثانية… أداة الإيد لسه بتتحمّل";
+  else if (body.use && !body.seen) msg.textContent = "مش شايفك. اقف قدام الموبايل بحيث يبان جسمك كله.";
+  else if (diag.hands === "loading" && !body.use) msg.textContent = "ثانية… أداة الإيد لسه بتتحمّل";
   else msg.textContent = "ارفع إيدك وكبّر تكبيرة الإحرام";
 }
 function takbeerStep(up, t, w) {
@@ -679,7 +827,7 @@ function takbeerStep(up, t, w) {
     const gone = t - det.lastSeen;
     if ((leftAbove() && gone >= AWAY_MS) || gone >= AWAY_ANY_MS) return startPrayer(det.lastSeen, true);
   }
-  if (diag.hands === "off" && !SIM && !mixed) return startPrayer(t); // no hand tool on this phone: start now
+  if (diag.hands === "off" && !SIM && !mixed && !body.use) return startPrayer(t); // no hand tool on this phone: start now
   takbeerMsg();
   const at = handsEdge(up, t); // the hands stay "up" into the prayer, so this raise is not counted again
   if (at) startPrayer(at);
@@ -710,7 +858,7 @@ function removeLastBow(t) {
 function noteYaw(yaw, t) {
   if (t - sal.yawAt < 250 || sal.side !== 0) return;
   const upright = app.mode === "calib" || app.mode === "takbeer"
-    || (app.mode === "pray" && !stand.on && det.pose === "far" && det.score < 1);
+    || (app.mode === "pray" && !stand.on && det.pose === "far" && (body.use ? body.lean < BODY_UPRIGHT : det.score < 1));
   if (!upright) return;
   sal.yawAt = t;
   sal.yaws.push(yaw);
@@ -731,8 +879,9 @@ function salamCheck(seen, yaw, t) {
     const rel = yaw - sal.base;
     if (sal.side && Math.sign(rel) === sal.side && Math.abs(rel) > need(sal.side) * SALAM_KEEP) side = sal.side;
     else side = rel > need(1) ? 1 : rel < -need(-1) ? -1 : 0;
-  } else if (t - det.lastSeen > 300) {
+  } else if (t - (body.use ? body.yawAt : det.lastSeen) > 300 && t - (body.use ? body.yawAt : det.lastSeen) < 2000) {
     // the face tool often loses a face turned far away: use the strongest turn just before
+    // (only for a while: an old turn must not stay as half a salam)
     const strongest = det.yawHist.reduce((a, [, y]) => (Math.abs(y - sal.base) > Math.abs(a) ? y - sal.base : a), 0);
     if (Math.abs(strongest) > SALAM_LOST_YAW) side = Math.sign(strongest);
   }
@@ -894,7 +1043,8 @@ function showDiag(force) {
   if (!force && t - diagShownAt < 500) return;
   diagShownAt = t;
   const v = $("video");
-  const shText = sh.seen ? (sh.home ? sh.score.toFixed(2) : "seen") : "-";
+  const shText = (sh.seen ? (sh.home ? sh.score.toFixed(2) : "seen") : "-")
+    + (body.use ? ` · back bend: ${body.seen && body.ref ? `${Math.round(body.lean)}°` : body.seen ? "seen" : "-"}${body.last?.raised ? " · arms up" : ""}` : "");
   const text = `face: ${diag.face} · hands: ${diag.hands} · body: ${diag.pose} · frames: ${diag.frames} · faces: ${diag.faces} · hands up: ${diag.handsUp} · shoulders: ${shText} · turn: ${det.lastYaw.toFixed(2)} · size: ${det.valley ? (det.lastSize / det.valley).toFixed(2) : "-"} · video: ${v.videoWidth}x${v.videoHeight}` + (diag.err ? ` · error: ${diag.err}` : "");
   for (const el of document.querySelectorAll(".diag")) el.textContent = text;
 }
@@ -903,7 +1053,7 @@ function showDiag(force) {
 let detector = null;
 let handDetector = null; // optional: without it the middle tashahhud ends at the ruku lean
 let poseDetector = null; // optional: the shoulders help the face see a bow
-let tick = 0, lastHandsUp = false, lastHandCount = 0, lastHandRes = null, lastShoulders = null;
+let tick = 0, lastHandsUp = false, lastHandCount = 0, lastHandRes = null, lastShoulders = null, lastBody = null;
 let stream = null;
 let loopOn = false;
 let lastVideoTime = -1;
@@ -1035,9 +1185,10 @@ function frame() {
       const runHands = handDetector && wantHands();
       const runPose = poseDetector && wantPose();
       // The hand tool and the body tool take turns when both are needed, and during the prayer:
-      // about 7 looks a second each is enough there, and saves battery.
+      // about 7 looks a second each is enough there, and saves battery. When the body is the main
+      // eye (standing prayer) it looks on every frame.
       const odd = (tick++ & 1) === 1;
-      const turns = (runHands && runPose) || app.mode === "pray";
+      const turns = (runHands && runPose) || (app.mode === "pray" && !body.use);
       if (runHands) {
         if (!turns || !odd) {
           lastHandRes = handDetector.detectForVideo(video, performance.now());
@@ -1048,16 +1199,19 @@ function frame() {
         handsUp = lastHandsUp;
         if (handsUp) diag.handsUp++;
       } else { lastHandsUp = false; lastHandCount = 0; lastHandRes = null; }
-      if (!runPose) lastShoulders = null;
+      if (!runPose) { lastShoulders = null; lastBody = null; }
       else if (!turns || odd) {
-        try { lastShoulders = shouldersOf(poseDetector.detectForVideo(video, performance.now()), video); }
-        catch (e) { lastShoulders = null; diag.err = "body: " + String(e?.message || e); }
+        try {
+          const pres = poseDetector.detectForVideo(video, performance.now());
+          lastShoulders = shouldersOf(pres, video);
+          lastBody = bodyOf(pres);
+        } catch (e) { lastShoulders = null; lastBody = null; diag.err = "body: " + String(e?.message || e); }
       }
     } catch (e) { diag.err = String(e?.message || e); }
     showDiag();
-    if (app.mode === "calib" || app.mode === "takbeer" || app.mode === "check") drawOverlay(box, lastHandRes, video, handsUp, lastShoulders);
-    if (app.mode === "check") checkStep(w, handsUp, lastHandCount, t, pos, lastShoulders);
-    onObservation(w, yaw, t, handsUp, pos, lastShoulders);
+    if (app.mode === "calib" || app.mode === "takbeer" || app.mode === "check") drawOverlay(box, lastHandRes, video, handsUp, lastShoulders, body.use ? lastBody : null);
+    if (app.mode === "check") checkStep(w, handsUp, lastHandCount, t, pos, lastShoulders, lastBody);
+    onObservation(w, yaw, t, handsUp, pos, lastShoulders, lastBody);
     if (app.mode === "pray") renderMeter();
   }
   setTimeout(frame, FRAME_MS); // a plain timer: animation frames can be held back by the browser
@@ -1138,9 +1292,33 @@ function shouldersOf(res, video) {
   return { sy: (a.y + b.y) / 2, sw: Math.hypot((a.x - b.x) * W, (a.y - b.y) * H) / H, pts: [a, b] };
 }
 
+// The whole body from the body tool (null when its shoulders are not seen). up = the direction of
+// the back (3D, from the middle of the hips to the middle of the shoulders, length 1); raised =
+// both wrists above the shoulders along the back; yaw = the nose between the ears (0 = facing
+// the phone); head / hips / feet = in the picture. lm = the points in the picture, for drawing.
+function bodyOf(res) {
+  const lm = res?.landmarks?.[0], wl = res?.worldLandmarks?.[0];
+  if (!lm || !wl || lm.length < 29 || wl.length < 29) return null;
+  const vis = (i) => lm[i].visibility ?? 0;
+  if (vis(11) < 0.5 || vis(12) < 0.5) return null;
+  const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 });
+  const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
+  const S = mid(wl[11], wl[12]), back = sub(S, mid(wl[23], wl[24]));
+  const len = Math.hypot(back.x, back.y, back.z) || 1e-6;
+  const up = { x: back.x / len, y: back.y / len, z: back.z / len };
+  const above = (w) => { const d = sub(w, S); return d.x * up.x + d.y * up.y + d.z * up.z; }; // metres above the shoulders
+  const raised = vis(15) > 0.3 && vis(16) > 0.3 && above(wl[15]) > -0.02 && above(wl[16]) > -0.02;
+  const inPic = (i) => vis(i) > 0.5 && lm[i].x > 0 && lm[i].x < 1 && lm[i].y > 0 && lm[i].y < 1;
+  // the head turn only when the nose and both ears are seen (not guessed from outside the picture)
+  const gap = Math.abs(lm[7].x - lm[8].x);
+  const yaw = inPic(0) && inPic(7) && inPic(8) && gap > 1e-3 ? (lm[0].x - (lm[7].x + lm[8].x) / 2) / gap : null;
+  return { up, raised, yaw, head: inPic(0), hips: inPic(23) && inPic(24), feet: inPic(27) || inPic(28), lm };
+}
+
 // The camera picture gets a box around the face, a line across the shoulders, and a dot on each
 // joint of each hand seen. The hand dots turn green when both hands are up as for a takbeer.
-function drawOverlay(box, handRes, video, bothUp, shoulders) {
+// Standing prayer by the body: the body's lines instead (green when both arms are up).
+function drawOverlay(box, handRes, video, bothUp, shoulders, b = null) {
   const c = $("overlay");
   const ctx = c.getContext("2d");
   c.width = video.videoWidth || 640;
@@ -1176,13 +1354,34 @@ function drawOverlay(box, handRes, video, bothUp, shoulders) {
       ctx.fill();
     }
   }
+  if (b?.lm) {
+    // shoulders, hips, the two sides, arms and legs; the nose as a dot
+    const L = b.lm, lines = [[11, 12], [23, 24], [11, 23], [12, 24], [11, 13], [13, 15], [12, 14], [14, 16], [23, 25], [25, 27], [24, 26], [26, 28]];
+    ctx.strokeStyle = ctx.fillStyle = b.raised ? color("--ok", "#74c095") : color("--lamp", "#d6b26b");
+    ctx.lineWidth = 4;
+    for (const [i, j] of lines) {
+      if ((L[i].visibility ?? 0) < 0.3 || (L[j].visibility ?? 0) < 0.3) continue;
+      ctx.beginPath();
+      ctx.moveTo(L[i].x * c.width, L[i].y * c.height);
+      ctx.lineTo(L[j].x * c.width, L[j].y * c.height);
+      ctx.stroke();
+    }
+    if ((L[0].visibility ?? 0) >= 0.3) {
+      ctx.beginPath();
+      ctx.arc(L[0].x * c.width, L[0].y * c.height, r * 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 }
 
 // Placement check: says what the camera sees, so the phone can be moved until the face, the
 // shoulders and both raised hands fit in the picture. Raising the hands here does not start a prayer.
 const placeCheck = { goodUntil: 0, shAt: 0 };
-function checkStep(w, bothUp, handCount, t, pos, shoulders) {
+function checkStep(w, bothUp, handCount, t, pos, shoulders, b = null) {
   const msg = $("calibMsg");
+  decideBody(b, w);
+  if (body.use) return bodyCheckStep(b, t);
+  if (body.use == null && settings.posture === "stand" && diag.pose === "loading") { msg.textContent = "ثانية… أداة الجسم بتتحمّل"; return; }
   if (bothUp) placeCheck.goodUntil = t + 1500; // keep the good news on screen a moment
   if (shoulders) placeCheck.shAt = t;
   const bodyOn = diag.pose === "ready";
@@ -1202,6 +1401,20 @@ function checkStep(w, bothUp, handCount, t, pos, shoulders) {
   else text = bodyOn ? "شايف وشك وكتافك ✓ ارفع إيديك الاتنين زي التكبير." : "شايف وشك ✓ ارفع إيديك الاتنين زي التكبير.";
   msg.textContent = text;
   msg.classList.toggle("good", good && shOk);
+}
+// Standing prayer: the body has to be in the picture from the head to the hips at least.
+function bodyCheckStep(b, t) {
+  const msg = $("calibMsg");
+  if (b?.raised && b.head && b.hips) placeCheck.goodUntil = t + 1500;
+  const good = t < placeCheck.goodUntil;
+  let text;
+  if (good) text = "شايفك وشايف إيديك مرفوعة ✓ المكان ده مظبوط";
+  else if (!b) text = "مش شايفك. اقف قدام الموبايل بحيث يبان جسمك كله.";
+  else if (!b.head) text = "راسك مش باينة. ميّل الموبايل لورا شوية أو ابعد عنه.";
+  else if (!b.hips) text = "وسطك مش باين. ابعد عن الموبايل شوية.";
+  else text = "شايفك ✓ ارفع إيديك الاتنين زي التكبير.";
+  msg.textContent = text;
+  msg.classList.toggle("good", good);
 }
 
 // ---------- screens ----------
@@ -1268,7 +1481,7 @@ function startPrayer(t, away = false) {
   det.pose = "far"; det.cand = null;
   sh.home = null;
   rec.start(t);
-  rec.event(t, `start ${app.key} ${settings.posture}/${settings.place} sens ${settings.sens} hands ${diag.hands} body ${diag.pose}`);
+  rec.event(t, `start ${app.key} ${settings.posture}/${settings.place} sens ${settings.sens} hands ${diag.hands} body ${diag.pose}${body.use ? " (watched by the body)" : ""}`);
   if (away) rec.event(t, "stood up");
   $("pName").textContent = `صلاة ${p.name}`;
   // keep the video on screen (small), so the phone does not pause a hidden camera
@@ -1313,7 +1526,8 @@ function traceText(r) {
   const head = `prayer-counter v${r.v ?? "?"} ${r.name} ${new Date(r.t0).toISOString()} posture=${r.posture} place=${r.place} sens=${r.trace.sens}`;
   const steps = r.segs.map((s, i) => `${i}:${s.label}=${((s.end - s.start) / 1000).toFixed(1)}s`).join(" | ");
   const match = r.trace.match ? `\nMATCH ${r.trace.match}` : "";
-  const fields = ["t:size,score,y,turn,bowed", "t:size,score,y,turn,bowed,shoulders", "t:size,score,y,turn,bowed,shoulders,hands"][Math.max(0, Math.min(2, (r.v ?? 0) - 7))];
+  const fields = ["t:size,score,y,turn,bowed", "t:size,score,y,turn,bowed,shoulders", "t:size,score,y,turn,bowed,shoulders,hands",
+    "t:size,score,y,turn,bowed,shoulders,hands,body,arms"][Math.max(0, Math.min(3, (r.v ?? 0) - 7))];
   return `${head}\nSTEPS ${steps}\nEVENTS ${r.trace.events}${match}\nSAMPLES ${fields} ${r.trace.samples}`;
 }
 
@@ -1388,16 +1602,17 @@ function renderLive(stepChanged) {
 function renderChip(t) {
   const chip = $("chip");
   let cls = "seen", text = "شايفك";
+  const gone = body.use ? !body.seen && t - body.lastSeen > 1000 : !det.seen && t - det.lastSeen > 1000;
   if (stand.on) text = "واقف"; // standing, above the picture: nothing to see until sitting down
   else if (det.pose === "near") { cls = "near"; text = "قريب"; }
-  else if (!det.seen && t - det.lastSeen > 1000) { cls = "lost"; text = "مش شايفك"; }
+  else if (gone) { cls = "lost"; text = "مش شايفك"; }
   chip.className = `chip ${cls}`;
   chip.textContent = text;
 }
 
 function renderMeter() {
-  // how far toward "closer" this upright position is (face or shoulders); full while bowed
-  const lean = Math.max(det.score, sh.seen && sh.home ? sh.score : 0);
+  // how far toward "closer" this upright position is (face or shoulders, or the back's bend); full while bowed
+  const lean = body.use ? body.lean / BODY_NEAR : Math.max(det.score, sh.seen && sh.home ? sh.score : 0);
   const p = det.pose === "near" ? 1 : stand.on ? 0 : Math.max(0, Math.min(1, lean));
   $("nearBar").style.width = `${Math.round(p * 100)}%`;
 }
@@ -1555,7 +1770,10 @@ setInterval(() => renderLive(false), 250);
 // Test hook (only with ?sim): feed face values by hand to check the counting logic.
 if (SIM) {
   window.__pc = {
-    feed(w, yaw = 0, t, handsUp = false, pos = null, shoulders = null) { simNow = t ?? simNow + 100; onObservation(w, yaw, simNow, handsUp, pos, shoulders); },
+    feed(w, yaw = 0, t, handsUp = false, pos = null, shoulders = null, b = null) { simNow = t ?? simNow + 100; onObservation(w, yaw, simNow, handsUp, pos, shoulders, b); },
+    body: () => body,
+    bodyOf: (res) => bodyOf(res),
+    checkBody: (b, t) => { bodyCheckStep(b, t); return $("calibMsg").textContent; },
     state: () => ({ mode: app.mode, ptr: app.ptr, step: app.steps[app.ptr]?.label, group: app.steps[app.ptr]?.g, pose: det.pose, valley: det.valley, peak: det.peak }),
     history: () => load(HIST_KEY, []),
     handsRaised: (res, box, video) => handsRaised(res, box, video),

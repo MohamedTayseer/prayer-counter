@@ -4,6 +4,28 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v10 — standing prayer watched by the body
+- Found when praying standing: from a phone on the floor the face is too small
+  for the face tool (standing far enough to fit in the picture), and closer up
+  the head is out of the picture.
+- For "واقف" the body tool is now the main eye. It sees the whole person from
+  a couple of metres:
+  - how far your back is bent compared with standing (in degrees, whatever
+    angle the phone looks from): bent = ruku or sujood; upright = standing or
+    sitting on the floor. Sitting up from sujood while still leaning forward
+    a little also counts;
+  - both wrists above your shoulders = the takbeer (opening, before ruku,
+    "sami' Allahu", standing up for rak'ah 3);
+  - your nose between your ears = the head turn for the salam.
+- Put the phone on the floor a little past where you do sujood, leaning
+  back, and stand far enough that your whole body is in the picture. The
+  placement check draws your body's lines and says when your head or your
+  waist is out of the picture.
+- If the body tool does not work on the phone, standing prayers are watched
+  by the face as before.
+- The prayer record adds the back's bend and the arms for each sample.
+- Sitting and "first rak'ah standing" prayers are unchanged.
+
 ## v9 — the salam is seen more surely
 - Found from a real record (Asr, 17 Oct): the salam was not seen and the
   prayer had to be ended with the button. Even when facing the phone, the
