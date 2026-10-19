@@ -75,6 +75,13 @@
   // A, with the sitting face right at the top edge of the picture (bad placement): still works
   const startMixedTop = async (key) => { document.querySelector('[data-posture="mixed"]').click(); document.querySelector(`[data-key="${key}"]`).click(); await new Promise((r) => setTimeout(r, 30)); feed(0.13, 3500, { cy: 0.1 }); feed(0.13, 2000, { cy: 0.1 }); feed(0.15, 300, { cy: 0.14 }); feed(0.13, 100, { cy: 0.08 }); };
   await startMixedTop("fajr"); feed(null, 49000); feed(0.13, 100, { cy: 0.06 }); feed(0.13, 1000, { cy: 0.1 }); feed(0.25, 1500, { cy: 0.38 }); feed(null, 3000); feed(0.13, 3000, { cy: 0.1 }); feed(0.25, 1000, { cy: 0.38 }); feed(null, 3000); feed(0.13, 30000, { cy: 0.1 }); raise(0.13, 0.1); feed(0.2, 6000, { cy: 0.23 }); feed(0.13, 300, { cy: 0.1 }); raise(0.13, 0.1); feed(0.13, 2000, { cy: 0.1 }); feed(0.25, 1500, { cy: 0.38 }); feed(null, 3000); feed(0.13, 3000, { cy: 0.1 }); feed(0.25, 1000, { cy: 0.38 }); feed(null, 3000); salam(0.13, 0.1); out.mixedA_seatAtTopEdge = sum(); done();
+  // like the Dhuhr record of 19 Oct (v10): standing, the face peeks in at the top edge (sitting size,
+  // y 0.12-0.2) instead of leaving; the standing ruku shows as a big face looking down at the phone
+  // (2.7x, y 0.55) for 7 s; then he sits down, rests 4 s, and does the two sujoods
+  const startMixedPeek = async (key) => { document.querySelector('[data-posture="mixed"]').click(); document.querySelector(`[data-key="${key}"]`).click(); await new Promise((r) => setTimeout(r, 30)); feed(0.13, 3500, { cy: 0.42 }); feed(0.13, 2000, { cy: 0.42 }); feed(0.15, 300, { cy: 0.47 }); feed(0.13, 300, { cy: 0.25 }); };
+  await startMixedPeek("fajr"); for (let i = 0; i < 12; i++) { feed(0.13, 2000, { cy: 0.15 }); feed(null, 400); }
+  feed(0.35, 7000, { cy: 0.55 }); feed(0.13, 300, { cy: 0.2 }); feed(null, 600); feed(0.13, 2000, { cy: 0.15 });
+  feed(0.14, 300, { cy: 0.3 }); feed(0.13, 4000, { cy: 0.42 }); sujoods(); rest2(); out.mixedA_peekAtTop_bigRuku = sum(); done();
   // a Dhuhr, case A, with the middle tashahhud and rak'ahs 3 and 4
   await startMixed("dhuhr"); feed(null, 49000); sitDown(1000); sujoods(); feed(0.13, 30000, { cy: 0.42 }); chairRak(); feed(0.13, 15000, { cy: 0.42 }); raise(0.13, 0.42); feed(0.13, 30000, { cy: 0.42 }); chairRak(); feed(0.13, 30000, { cy: 0.42 }); chairRak(); salam(0.13, 0.42); out.mixedA_dhuhr = sum(); done();
 
@@ -106,6 +113,6 @@
 // mixedA_quickSujood and mixedA_noRest 13 (missed 1); mixedA_topFlicker 13 (missed 1, no extra);
 // mixedA_satFartherBack and mixedA_satCloser 13 (missed 1); mixedA_rukuSeenLostMidway 13 (missed 0);
 // mixedA_rukuChairLike2s and 1s 13 (missed 0: the ruku counted); mixedB_faceLostAfterSit 13 (missed 0);
-// mixedA_seatAtTopEdge 13 (missed 1);
+// mixedA_seatAtTopEdge 13 (missed 1); v11: mixedA_peekAtTop_bigRuku 13 (missed 0, the standing ruku counted);
 // mixedA_dhuhr 26 (missed 1); shouldersRuku 13 (sameWithoutShoulders: missed 2);
 // dhuhrWithShoulders 26; faceHiddenShouldersUp 13 (that sujood ends when the shoulders come up).

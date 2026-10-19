@@ -15,9 +15,9 @@
 // eye: the bend of the back, the arms and the head turn (see bodyStep).
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 10;
+const APP_VERSION = 11;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=23";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=24";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -65,8 +65,8 @@ const FAR_HOLD_MS = 300;     // must stay far this long to count
 const LOST_AS_NEAR_MS = 500; // face gone this long after growing = still leaning in
 // Head turns are measured from the person's own "facing the phone" turn (the phone may stand a
 // little to one side, or the face tool may lean one way): see noteYaw.
-const SALAM_YAW = 0.3;       // how far the head must turn for the salam
-const SALAM_YAW2 = 0.22;     // ...the turn to the other side, once one side was seen, needs a bit less
+const SALAM_YAW = 0.2;       // how far the head must turn for the salam (his turns can be as small as 0.25)
+const SALAM_YAW2 = 0.15;     // ...the turn to the other side, once one side was seen, needs a bit less
 const SALAM_KEEP = 0.65;     // a turn going on stays a turn down to this share of what it needed
 const SALAM_GAP_MS = 8000;   // the two turns of the salam come within this time of each other
 const SALAM_LOST_YAW = 0.15; // face lost right after turning at least this far = a turn to that side
@@ -165,6 +165,7 @@ const det = {
   farAt: 0,                       // when the last bow ended
   farBy: "face",                  // what showed it ending
   refresh: false,                 // learn the upright face afresh when it shows again
+  upSince: 0,                     // "first rak'ah standing": the face at the top of the picture since
 };
 // What the camera saw during the prayer: the bows and the hand raises. The steps on the screen are
 // worked out from these by matching them against the shape of the prayer (align.js).
@@ -172,7 +173,7 @@ const obs = { bows: [], raises: [], sits: [] };
 // "First rak'ah standing" with the phone set for sitting. on = standing, out of the picture;
 // visit = the face came back at visit.t and is not yet known to be sitting; used = this prayer
 // went through standing out of the picture.
-const stand = { on: false, used: false, visit: null };
+const stand = { on: false, used: false, visit: null, ruku: null };
 // Shoulders from the body tool: sy = their middle height, sw = the width between them (both as
 // shares of the picture height), home = the same while upright, score = how far into a lean.
 const sh = { seen: false, sy: 0, sw: 0, home: null, score: 0, lastSeen: 0 };
@@ -191,10 +192,10 @@ function resetTracking() {
     ema: 0, pose: "far", cand: null, candSince: 0, valley: 0, peak: 0, pos: null, home: null, low: null, score: 0,
     lastSeen: 0, lastSize: 0, lastYaw: 0, yawHist: [], seen: false, calib: [], calibStart: 0,
     prevValley: 0, prevHome: null, still: null, upY: null, prevUpY: null, seat: null, raw: null,
-    nearBy: "face", farAt: 0, farBy: "face", refresh: false,
+    nearBy: "face", farAt: 0, farBy: "face", refresh: false, upSince: 0,
   });
   obs.bows = []; obs.raises = []; obs.sits = [];
-  Object.assign(stand, { on: false, used: false, visit: null });
+  Object.assign(stand, { on: false, used: false, visit: null, ruku: null });
   Object.assign(sh, { seen: false, sy: 0, sw: 0, home: null, score: 0, lastSeen: 0 });
   Object.assign(sal, { side: 0, since: 0, first: 0, firstAt: 0, base: 0, yaws: [], yawAt: 0 });
   Object.assign(hands, { since: 0, up: false, downSince: 0, rukuSoon: null });
@@ -279,7 +280,7 @@ function onObservation(w, yaw, t, handsUp = false, pos = null, shoulders = null,
 
   if (body.use) bodyStep(b, t);
   else {
-    if (stand.on && w != null) startVisit(t); // the face is back after standing
+    if (stand.on) awayStep(t, w); // standing: only a standing ruku or sitting down can show
     if (!stand.on) bowStep(w, t);
   }
 
@@ -400,8 +401,7 @@ function bodyStep(b, t) {
 function bowStep(w, t) {
   const down = 1 + (settings.sens - 1) * 0.7; // away: face this many times smaller than the peak
   const bow = obs.bows[obs.bows.length - 1];
-  // just back in the picture after standing: a bow counts only once the face has settled on the chair,
-  // or, if it went straight on from the sitting place into a deep bow (sat down and went to sujood)
+  // just back at the sitting place after standing: a bow counts only once the face has settled there
   const visit = stand.visit;
   const canBow = !visit || visit.seatAt > 0;
   // right after the takbeer before ruku a ruku is expected, so a smaller bow is enough
@@ -426,11 +426,11 @@ function bowStep(w, t) {
       det.upY = det.upY == null ? det.pos.cy : Math.min(det.upY, det.pos.cy);
       if (det.score < 0.3 && det.home) det.home = { cx: det.home.cx * 0.95 + det.pos.cx * 0.05, cy: det.home.cy * 0.95 + det.pos.cy * 0.05, h: det.home.h * 0.95 + det.pos.h * 0.05 };
       followShoulders();
-      if (visit) visitRest(visit, size, t);
+      if (visit && visitRest(visit, size, t)) return; // not sitting after all: standing again
       if (!visit || visit.seatAt > 0) {
         if (det.score >= need) { want = "near"; det.nearBy = "face"; }
         else if (shOn && sh.score >= need) { want = "near"; det.nearBy = "shoulders"; }
-      } else if (visit.wasAtSeat && det.score >= 2) { want = "near"; det.nearBy = "face"; }
+      }
     } else {
       det.peak = Math.max(det.peak, size);
       if (!det.low || det.pos.cy > det.low.cy) det.low = { ...det.pos };
@@ -450,14 +450,14 @@ function bowStep(w, t) {
       if (gone >= AWAY_MS && leftAbove()) return goAway(t);
       if (gone >= AWAY_ANY_MS && visit && s && p && p.cy < s.cy - 0.5 * s.h) return goAway(t);
     }
-    if (t - det.lastSeen > LOST_AS_NEAR_MS && (canBow || visit.wasAtSeat)) {
+    if (t - det.lastSeen > LOST_AS_NEAR_MS && canBow) {
       // face left the picture while coming close or going down (head bent in sujood). When the
       // shoulders ended the last bow while the face was still hidden, its last place is from inside
       // that bow: only once the face has been seen again.
       const atBottom = det.pos && det.pos.cy + det.pos.h / 2 > 0.92;
       const faceSinceUp = det.farBy !== "shoulders" || det.lastSeen >= det.farAt;
-      if (faceSinceUp && (canBow ? det.score >= 0.5 || atBottom : det.score >= 2 || atBottom)) { want = "near"; det.nearBy = "face"; }
-      else if (canBow && shOn && sh.score >= SH_NEAR_LOST) { want = "near"; det.nearBy = "shoulders"; }
+      if (faceSinceUp && (det.score >= 0.5 || atBottom)) { want = "near"; det.nearBy = "face"; }
+      else if (shOn && sh.score >= SH_NEAR_LOST) { want = "near"; det.nearBy = "shoulders"; }
     }
   } else if (det.pose === "near") {
     // Face gone while bowed. If it was back at its upright height (or at the top edge) it left
@@ -525,8 +525,55 @@ function bowStep(w, t) {
 }
 
 // ---------- "first rak'ah standing" with the phone set for sitting ----------
-// Standing, the face is above the picture. It shows again either for a moment during a standing
-// ruku (then it goes back up and out through the top), or to stay: sitting down on the chair.
+// Standing, the face is above the picture or peeks in at its top edge. Two things can show then: a
+// standing ruku, seen from below (the face much closer to the phone than when sitting, looking down
+// at it), and sitting down on the chair (the face settles at its sitting place).
+
+// Where the face is, compared with where it sits: "top" = well above it, or up at the top edge and
+// above it (standing, peeking in), "big" = much closer than sitting (a standing ruku), "seat" =
+// about where it sits.
+function seatView(p, size) {
+  const s = det.seat;
+  if (!s) return "seat";
+  if (p.cy < s.cy - 0.5 * s.h || (p.cy - p.h / 2 <= 0.06 && p.cy < s.cy - 0.25 * s.h)) return "top";
+  return size / s.size >= 1.6 ? "big" : "seat";
+}
+
+// Standing: nothing is counted, except a standing ruku seen from below (big face for 1 s or more,
+// over when it is gone for half a second), and the face coming to its sitting place (maybe sitting
+// down: see startVisit).
+function awayStep(t, w) {
+  const r = stand.ruku;
+  const view = w != null ? seatView(det.pos, det.ema) : null;
+  if (view === "big") {
+    if (r) r.last = t; else stand.ruku = { s: t, last: t };
+    return;
+  }
+  if (r && t - r.last > 500) {
+    stand.ruku = null;
+    if (r.last - r.s >= 1000) {
+      obs.bows.push({ s: r.s, e: r.last, lostLowMs: 0, lostSince: 0 });
+      rec.event(t, "ruku (standing)");
+      realign(t);
+    }
+  }
+  if (view === "seat" && !stand.ruku) startVisit(t);
+}
+
+// The face left its sitting place again before sitting down was sure: still standing. If it had
+// come to rest there for a moment (1-10 s) and then went back up, that was a standing ruku seen
+// from below at about the sitting size.
+function backAway(t) {
+  const v = stand.visit, len = v ? det.lastSeen - v.t : 0;
+  if (v?.seatAt && v.inside && len >= 1000 && len <= VISIT_MAX_MS) {
+    obs.bows.push({ s: v.t, e: det.lastSeen, lostLowMs: 0, lostSince: 0 });
+    rec.event(t, "ruku (standing)");
+  }
+  Object.assign(stand, { on: true, visit: null });
+  det.pose = "far"; det.cand = null; det.score = 0;
+  rec.event(t, "not sitting yet");
+  realign(t);
+}
 
 // The face left through the top of the picture (judged from where it was last seen): at the top
 // edge and above where it sits, or well above where it sits. (A face that sits right at the top
@@ -567,12 +614,13 @@ function goAway(t) {
   realign(t);
 }
 
-// The face is back after standing. Until it is known that the person sat down, the sitting place
-// learned at the start is the upright place (sitting down itself leans in a bit, so no bow yet).
+// The face is back at its sitting place after standing. Until it is known that the person sat down,
+// the sitting place learned at the start is the upright place (sitting down itself leans in a bit,
+// so no bow yet).
 function startVisit(t) {
   const s = det.seat || { cx: det.pos.cx, cy: det.pos.cy, h: det.pos.h, size: det.ema };
   stand.on = false;
-  stand.visit = { t, seatAt: 0, wasAtSeat: false, inside: false, still: null };
+  stand.visit = { t, seatAt: 0, inside: false, still: null };
   det.pose = "far"; det.cand = null; det.score = 0;
   det.valley = s.size; det.home = { cx: s.cx, cy: s.cy, h: s.h };
   det.upY = null; det.prevHome = null; det.prevValley = 0; det.still = null; det.refresh = false;
@@ -584,15 +632,15 @@ function startVisit(t) {
 // be the chair - not at the top edge, not well above where it sat at the start, about the size it had
 // then (people do not sit down in exactly the same place) - that place is upright and a bow can
 // count from there. Resting there 1.5 s = sat down. In the picture longer than a standing ruku can
-// last = sitting too.
+// last = sitting too. Going up to the top again (or much closer before it settled) = still standing:
+// returns true then.
 function visitRest(v, size, t) {
   const p = det.pos, s = det.seat;
   const ratio = s ? size / s.size : 1;
-  const topEdge = p.cy - p.h / 2 <= 0.06 && (!s || p.cy < s.cy - 0.5 * s.h); // standing, peeking in at the top
-  // at the very place it sat at the start (for a sujood straight after sitting down)
-  if (!s || (Math.abs(p.cy - s.cy) <= s.h && Math.abs(ratio - 1) <= 0.3)) v.wasAtSeat = true;
+  const view = seatView(p, size);
+  if (view === "top" || (view === "big" && !v.seatAt)) { backAway(t); return true; }
   if (det.raw.cy - det.raw.h / 2 >= 0.08) v.inside = true; // the whole face came into the picture
-  const chairLike = !topEdge && ratio >= 0.6 && ratio <= 1.6 && (!s || p.cy >= s.cy - s.h);
+  const chairLike = ratio >= 0.6 && ratio <= 1.6;
   // resting there = size within 15% and place within half a face (at least 4% of the picture: faces
   // jitter); the rest only counts while the face looks like sitting on the chair
   const still = chairLike && v.still && Math.abs(size - v.still.size) <= 0.15 * v.still.size && Math.abs(p.cy - v.still.cy) <= Math.max(0.5 * p.h, 0.04);
@@ -603,7 +651,8 @@ function visitRest(v, size, t) {
     det.valley = size; det.home = { ...p }; det.upY = p.cy; det.score = 0; // bows are measured from here
     if (sh.seen) sh.home = { sy: sh.sy, sw: sh.sw };
   }
-  if ((v.seatAt && rest >= SIT_MS) || (t - v.t > VISIT_MAX_MS && !topEdge)) sitConfirmed(t, rest >= 300);
+  if ((v.seatAt && rest >= SIT_MS) || t - v.t > VISIT_MAX_MS) sitConfirmed(t, rest >= 300);
+  return false;
 }
 
 // Sat down at the moment the face came back. settled = resting upright now (measure from here).
@@ -826,6 +875,12 @@ function takbeerStep(up, t, w) {
   if (mixed && w == null && det.lastSeen) {
     const gone = t - det.lastSeen;
     if ((leftAbove() && gone >= AWAY_MS) || gone >= AWAY_ANY_MS) return startPrayer(det.lastSeen, true);
+  }
+  // ...or it went up to the top of the picture and stays there (still peeking in while standing)
+  if (mixed && w != null && det.pos) {
+    if (seatView(det.pos, det.ema) !== "top") det.upSince = 0;
+    else if (!det.upSince) det.upSince = t;
+    else if (t - det.upSince >= AWAY_MS) return startPrayer(det.upSince, true);
   }
   if (diag.hands === "off" && !SIM && !mixed && !body.use) return startPrayer(t); // no hand tool on this phone: start now
   takbeerMsg();
@@ -1234,8 +1289,8 @@ function handsRaised(res, faceBox, video) {
     const cy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
     if (cy < top || cy > low) continue;              // not at the height of a takbeer
     const side = (cx - fcx) / fw;                     // in face widths from the middle of the face
-    if (side <= -0.45 && side >= -2.5) left = true;
-    else if (side >= 0.45 && side <= 2.5) right = true;
+    if (side <= -0.3 && side >= -2.5) left = true;
+    else if (side >= 0.3 && side <= 2.5) right = true;
   }
   return left && right;
 }
@@ -1243,7 +1298,7 @@ function handsRaised(res, faceBox, video) {
 // For the record: each time two hands come up above the chest, how long and where they were at
 // their highest, and whether it counted as a raise - to see why a takbeer was or was not seen.
 // Places are from the middle of the face, in face widths (x) and face heights (y, + = lower);
-// a raise needs both hands 0.45-2.5 widths out to the side and y between -1.0 and +1.1.
+// a raise needs both hands 0.3-2.5 widths out to the side and y between -1.0 and +1.1.
 const handLog = { since: 0, last: 0, counted: false, best: null };
 function handPair(res, faceBox, video) {
   const list = res?.landmarks;
@@ -1477,7 +1532,7 @@ function startPrayer(t, away = false) {
   app.alignedAt = t;
   app.cued = new Set();
   obs.bows = []; obs.raises = []; obs.sits = [];
-  Object.assign(stand, { on: away, used: away, visit: null });
+  Object.assign(stand, { on: away, used: away, visit: null, ruku: null });
   det.pose = "far"; det.cand = null;
   sh.home = null;
   rec.start(t);

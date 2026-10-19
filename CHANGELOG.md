@@ -4,6 +4,25 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v11 — first rak'ah standing, salam and takbeer from a real Dhuhr
+- Found from a real record (Dhuhr, first rak'ah standing, 19 Oct): while
+  standing, the face did not leave the picture: it peeked in at the top edge,
+  and the app took that for sitting down. Sitting down on the chair was then
+  counted as a sujood, the real second sujood was thrown out, and for a while
+  the app even said "the last tashahhud" after rak'ah 3.
+- While standing, the face is now read against where you sit:
+  - up at the top edge or above where you sit = still standing (ignored);
+  - much bigger than when sitting (your face close to the phone, looking
+    down at it) = your standing ruku, counted;
+  - back at your sitting place and staying there = sat down. A bow counts
+    only after that.
+- The prayer also starts when your face goes up to the top edge and stays
+  there, not only when it leaves the picture.
+- Salam: your turns in that prayer were small (about half of the Asr), so
+  smaller turns now count (measured from how you face the phone).
+- Takbeer: hands a little closer to the face now count (your takbeer before
+  rak'ah 3 had them 0.4 face widths from the middle of the face).
+
 ## v10 — standing prayer watched by the body
 - Found when praying standing: from a phone on the floor the face is too small
   for the face tool (standing far enough to fit in the picture), and closer up

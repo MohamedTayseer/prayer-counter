@@ -40,9 +40,11 @@ window.replayRecord = async (S, V0, hk, raises, prayer, posture, opts = {}) => {
       if (label !== lastLabel) { shown.push(`${(t / 1000).toFixed(1)} ${label}`); lastLabel = label; }
     }
   }
+  const stillPraying = __pc.state().mode === "pray";
+  if (stillPraying) document.getElementById("btnStop").click(); // not ended by a salam: end it here
   const h = __pc.history()[0];
   document.getElementById("rHome").click();
-  return { ended: h?.how, steps: h?.segs.length, match: h?.trace.match, spoken: spoken.join(", "), shown: shown.join(" | ") };
+  return { ended: stillPraying ? "NOT ENDED (stopped by the replay)" : h?.how, steps: h?.segs.length, match: h?.trace.match, events: h?.trace.events, spoken: spoken.join(", "), shown: shown.join(" | ") };
 };
 // v7 on the 2026-10-16 Asr record: all three guesses end at the salam with 26 steps,
 // "sat down" at ~17.3 s, middle-tashahhud cue ~41.5 s, last-tashahhud cue 93.6 s.
