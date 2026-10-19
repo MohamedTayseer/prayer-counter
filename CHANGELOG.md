@@ -4,6 +4,37 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v13 — automatic: no way of praying to choose, nothing learned before the prayer
+- Found from a real record (Isha, 19 Oct, first rak'ah standing): nothing was
+  counted. The camera saw the whole prayer (the 12 bows show clearly, in 4
+  groups of 3), but the 3-second learning at the start was done while standing
+  at the phone, and it was taken as the sitting place. From then on, sitting
+  read as "standing" and every bow as "coming back to sit".
+- New default way of praying: "تلقائي" (automatic). The old three (sitting,
+  standing, first rak'ah standing) stay as a backup and work exactly as in v12.
+- Automatic:
+  - Nothing is learned before the prayer. The clock starts at the opening
+    takbeer (the hands or the arms seen going up, sitting or standing), or when
+    the face goes up out of the picture (standing up above a phone set for
+    sitting), or with the start button.
+  - Standing is only taken from what is seen: the face going up out of the
+    picture (a face height or more above where it usually is), or peeking in,
+    cut off by its top edge. A whole face high in the picture is not taken for
+    standing, unless standing up was seen just before; even then, resting there
+    for 5 s means sitting.
+  - The sitting place is learned when sitting down is seen: the face comes into
+    the picture and rests there. Sitting down and going straight on into a
+    sujood counts that sujood.
+  - A standing ruku seen from below that was taken for sitting down is put right
+    when the face goes back up out of the picture (within 15 s, with at most one
+    bow since). Sitting up straighter between the two sujoods does not undo it.
+  - A small face with the whole body in the picture (phone on the floor): the
+    body tool watches, as in the standing prayer.
+  - With the phone on the lap: always sitting.
+  - The prayer screen says "قاعد" or "واقف".
+- The prayer record adds the face's real size and whether the app thought you
+  were standing.
+
 ## v12 — the takbeer before ruku is also seen by the body tool
 - In all the records so far, the takbeer just before each ruku was never seen
   with both hands up (the "sami' Allahu" raises were), although both hands go

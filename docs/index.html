@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Reem+Kufi:wght@500;700&family=IBM+Plex+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="style.css?v=25">
+<link rel="stylesheet" href="style.css?v=33">
 </head>
 <body>
 
@@ -21,8 +21,9 @@
 
   <div class="set-group">
     <span class="set-label">طريقة الصلاة</span>
-    <div class="places alerts" id="postureButtons">
-      <button class="place" data-posture="sit" aria-pressed="true">قاعد</button>
+    <div class="places postures" id="postureButtons">
+      <button class="place" data-posture="auto" aria-pressed="true">تلقائي</button>
+      <button class="place" data-posture="sit" aria-pressed="false">قاعد</button>
       <button class="place" data-posture="stand" aria-pressed="false">واقف</button>
       <button class="place" data-posture="mixed" aria-pressed="false">أول ركعة واقف</button>
     </div>
@@ -134,6 +135,6 @@
 
 <div class="flash" id="flash" hidden>الله أكبر</div>
 
-<script type="module" src="app.js?v=25"></script>
+<script type="module" src="app.js?v=33"></script>
 </body>
 </html>

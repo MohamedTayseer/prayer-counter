@@ -3,7 +3,8 @@
 A phone web app for praying seated on a chair. The front camera watches how close the face
 (and the shoulders) come to the phone and counts each rak'ah, ruku and sujood, with a live
 stopwatch for every part of the prayer. Everything runs on the phone; no video is recorded or
-sent anywhere.
+sent anywhere. By default ("تلقائي") it finds out by itself whether the person is sitting or
+standing, and when they sit down.
 
 - `docs/` — the app (served by GitHub Pages).
 - `CHANGELOG.md` — what changed in each version (v1, v2, ...).
@@ -15,5 +16,7 @@ sent anywhere.
   In the browser (`?sim`): paste `tests/browser-regression.js` (simulated prayers),
   `tests/browser-replay.js` (replays a record through the whole app),
   `tests/browser-old-sims.js` (exact step-by-step comparison of two versions),
-  `tests/browser-salam.js` (salam with the face turned a little at rest) and
-  `tests/browser-standing.js` (standing prayers watched by the body).
+  `tests/browser-salam.js` (salam with the face turned a little at rest),
+  `tests/browser-standing.js` (standing prayers watched by the body) and
+  `tests/browser-auto.js` (the automatic mode). `tests/browser-all.js` runs all of them and the
+  record replays in one go (see the comment at its top).

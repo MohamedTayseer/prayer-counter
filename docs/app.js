@@ -13,11 +13,16 @@
 // comes back and settles at its sitting place.
 // Standing prayer: from a phone on the floor the face is too small, so the body tool is the main
 // eye: the bend of the back, the arms and the head turn (see bodyStep).
+// "تلقائي" (automatic, the default): no way of praying is chosen and nothing is learned before the
+// prayer. The clock starts at the opening takbeer, or when the face goes up out of the picture
+// (standing up above a phone set for sitting). Standing is only taken from what is seen (the face
+// going up out of the picture, or peeking in at its top); the sitting place is learned when the
+// person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 12;
+const APP_VERSION = 13;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=25";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=33";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -38,12 +43,14 @@ const HIST_KEY = "prayerCounter.history";
 const SENS_KEY = "prayerCounter.sens";       // + ".front" / ".lap"
 const PLACE_KEY = "prayerCounter.place";
 const DIAG_KEY = "prayerCounter.diag";
-const POSTURE_KEY = "prayerCounter.posture";
+const POSTURE_KEY = "prayerCounter.posture2"; // v13: a new key, so everyone starts on "تلقائي"
 
 // How the prayer is done. Standing needs the phone on the floor in front of the place of sujood,
 // leaning back so it looks up at the face. Standing first: the phone is set for sitting, and the
 // standing part happens above the picture.
 const POSTURES = {
+  auto: { name: "تلقائي", calib: "",
+    hint: "حط الموبايل قدامك زي ما بتحطه وانت قاعد. ابدأ قاعد أو واقف، والبرنامج بيعرف لوحده إمتى وقفت وإمتى قعدت." },
   sit: { name: "قاعد على الكرسي", calib: "اقعد مستقيم وبص للموبايل" },
   stand: { name: "واقف", calib: "اقف مستقيم وبص للموبايل",
     hint: "حط الموبايل على الأرض بعد مكان السجود بشوية، مسنود لورا، وابعد لحد ما جسمك كله يبان في الصورة." },
@@ -100,6 +107,19 @@ const BODY_LOST_LEAN = 36;   // ...bent at least this far, and still going down 
                              // 1.2 s), when it was lost
 const BODY_RISE = 60;        // upright again also when coming up this much from the deepest bend of the
                              // bow, or to 40% of it (sitting up from sujood while leaning forward a little)
+// "تلقائي" (automatic)
+const AUTO_TOP = 0.25;       // before sitting down is known: a face last seen this high in the picture and
+                             // then gone left through the top; after standing up was seen, a face this
+                             // high is peeking in (still standing). Sitting, his face is at 0.37-0.42
+const AUTO_HIGH_MS = 5000;   // ...but resting this long whole in the picture, it is not peeking: maybe sitting
+const AUTO_UNDO_MS = 15000;  // "sat down" that turns out to be a standing ruku seen from below: the face goes
+                             // back up out of the picture within this time (his ruku 7 s, rising 3 s)
+const AUTO_DEEP = 1.3;       // the face back from standing grows this much over how it came in: sitting
+                             // down went straight on into a sujood (or a standing ruku), a bow at once
+const AUTO_FACE_W = 0.1;     // a face at least this wide (share of the picture) = the face tool watches; a
+                             // smaller one (or none) with the whole body in the picture = the body tool
+const AUTO_DECIDE_MS = 1000; // ...what it sees must stay the same this long before the start
+const AUTO_NONE_MS = 6000;   // nothing seen at all this long after the camera starts = standing above it
 
 const SIM = new URLSearchParams(location.search).has("sim"); // test mode: no camera, feed values by hand
 let simNow = 0;
@@ -118,14 +138,16 @@ function save(key, value) {
 
 const settings = {
   place: PLACES[load(PLACE_KEY, "front")] ? load(PLACE_KEY, "front") : "front",
-  posture: POSTURES[load(POSTURE_KEY, "sit")] ? load(POSTURE_KEY, "sit") : "sit",
+  posture: POSTURES[load(POSTURE_KEY, "auto")] ? load(POSTURE_KEY, "auto") : "auto",
   sens: 1.35,
 };
+const isAuto = () => settings.posture === "auto";
 // Sensitivity is kept per setup: sitting with the phone in front, sitting with it on the lap,
-// standing (phone on the floor), and standing first (phone on a table, at arm's length).
-const sensSlot = () => (settings.posture === "sit" ? settings.place : settings.posture);
+// standing (phone on the floor), and standing first (phone on a table, at arm's length). The
+// automatic mode uses the sitting ones (its face is watched the same way).
+const sensSlot = () => (settings.posture === "sit" || isAuto() ? settings.place : settings.posture);
 function loadSens() {
-  const def = settings.posture === "sit" ? PLACES[settings.place].sens : 1.35;
+  const def = settings.posture === "sit" || isAuto() ? PLACES[settings.place].sens : 1.35;
   settings.sens = Number(load(`${SENS_KEY}.${sensSlot()}`, def)) || def;
 }
 loadSens();
@@ -143,6 +165,9 @@ const app = {
   t0: 0,
   end: 0,
   drawnPtr: -1,
+  waitFrom: 0,       // automatic: when the wait for the takbeer began (the first look of the camera)
+  waitHome: null,    // automatic: where the face usually is while waiting ({cy, h}; follows it in ~3 s,
+                     // so standing up after tapping the phone is measured from where it was)
 };
 
 // ---------- face tracking state ----------
@@ -172,8 +197,9 @@ const det = {
 const obs = { bows: [], raises: [], sits: [] };
 // "First rak'ah standing" with the phone set for sitting. on = standing, out of the picture;
 // visit = the face came back at visit.t and is not yet known to be sitting; used = this prayer
-// went through standing out of the picture.
-const stand = { on: false, used: false, visit: null, ruku: null };
+// went through standing out of the picture; still = (automatic) the face resting whole, high up in
+// the picture while standing: where and since when.
+const stand = { on: false, used: false, visit: null, ruku: null, still: null };
 // Shoulders from the body tool: sy = their middle height, sw = the width between them (both as
 // shares of the picture height), home = the same while upright, score = how far into a lean.
 const sh = { seen: false, sy: 0, sw: 0, home: null, score: 0, lastSeen: 0 };
@@ -186,6 +212,8 @@ const hands = { since: 0, up: false, downSince: 0, rukuSoon: null };
 // decided yet); ref = the direction of the back while standing (3D, from the hips to the
 // shoulders); lean = how far the back is bent from it now (degrees); last = the body last seen.
 const body = { use: null, ref: null, calib: [], calibStart: 0, calibMiss: 0, seen: false, lastSeen: 0, yawAt: 0, lean: 0, peak: 0, leans: [], last: null };
+// Automatic mode before the start: the tool that should watch, by what is seen now (cand), since when.
+const autoEye = { cand: null, since: 0 };
 
 function resetTracking() {
   Object.assign(det, {
@@ -195,11 +223,13 @@ function resetTracking() {
     nearBy: "face", farAt: 0, farBy: "face", refresh: false, upSince: 0,
   });
   obs.bows = []; obs.raises = []; obs.sits = [];
-  Object.assign(stand, { on: false, used: false, visit: null, ruku: null });
+  Object.assign(stand, { on: false, used: false, visit: null, ruku: null, still: null });
   Object.assign(sh, { seen: false, sy: 0, sw: 0, home: null, score: 0, lastSeen: 0 });
   Object.assign(sal, { side: 0, since: 0, first: 0, firstAt: 0, base: 0, yaws: [], yawAt: 0 });
   Object.assign(hands, { since: 0, up: false, downSince: 0, rukuSoon: null });
   Object.assign(body, { use: null, ref: null, calib: [], calibStart: 0, calibMiss: 0, seen: false, lastSeen: 0, yawAt: 0, lean: 0, peak: 0, leans: [], last: null });
+  Object.assign(autoEye, { cand: null, since: 0 });
+  app.waitFrom = 0; app.waitHome = null;
   rec.reset();
 }
 
@@ -253,15 +283,19 @@ function onObservation(w, yaw, t, handsUp = false, pos = null, shoulders = null,
     det.pos = det.pos && !fresh ? { cx: det.pos.cx * 0.5 + p.cx * 0.5, cy: det.pos.cy * 0.5 + p.cy * 0.5, h: det.pos.h * 0.5 + p.h * 0.5 } : { ...p };
   }
   body.seen = b != null;
+  const waiting = isAuto() && app.mode === "takbeer"; // automatic: before the start
+  if (waiting && !app.waitFrom) app.waitFrom = t;
+  if (waiting && w != null) { const h0 = app.waitHome; app.waitHome = h0 ? { cy: h0.cy * 0.97 + det.pos.cy * 0.03, h: h0.h * 0.97 + det.pos.h * 0.03 } : { cy: det.pos.cy, h: det.pos.h }; }
+  if (app.mode === "calib" || app.mode === "check" || waiting) decideBody(b, w, t);
   if (b) {
     body.lastSeen = t; body.last = b;
+    if (isAuto() && body.use && (waiting || !body.ref)) autoBodyLearn(b, t);
     if (body.ref) {
       body.lean = leanOf(b);
       body.leans.push([t, body.lean]);
       while (body.leans.length && t - body.leans[0][0] > 1200) body.leans.shift();
     }
   }
-  if (app.mode === "calib" || app.mode === "check") decideBody(b, w);
   // standing prayer by the body: its arms are the hands and its head turn is the turn (nothing
   // while it is still being decided, so the face's and the body's turns are never mixed)
   // Watched by the face: the body tool's arms count too (it follows a quick takbeer that the hand
@@ -281,7 +315,8 @@ function onObservation(w, yaw, t, handsUp = false, pos = null, shoulders = null,
   }
   trackShoulders(shoulders, t);
   if (app.mode === "calib") return body.use ? bodyCalibStep(b, t) : body.use === false ? calibStep(w, t) : bodyWaitMsg();
-  if (app.mode === "takbeer") return takbeerStep(handsUp && uprightNow(), t, w);
+  // (automatic, watched by the face: nothing is learned before the start, so any raise is the takbeer)
+  if (app.mode === "takbeer") return takbeerStep(handsUp && (waiting && !body.use ? true : uprightNow()), t, w);
   if (app.mode !== "pray") return;
 
   if (body.use) bodyStep(b, t);
@@ -307,13 +342,46 @@ function onObservation(w, yaw, t, handsUp = false, pos = null, shoulders = null,
 // Is the body tool the main eye for this prayer? Only for a standing prayer, and only when the
 // body tool works on this phone (in the test mode: the first frame with a body or a face decides).
 // Waits while it loads. Its head turns start the "facing the phone" value afresh.
-function decideBody(b, w) {
+function decideBody(b, w, t) {
+  if (isAuto()) return autoEyeStep(b, w, t);
   if (body.use != null) return;
   if (settings.posture !== "stand") body.use = false;
   else if (SIM) { if (b) body.use = true; else if (w != null) body.use = false; }
   else if (poseDetector) body.use = true;
   else if (diag.pose !== "loading") body.use = false; // no body tool here: the face does it, as before
   if (body.use) sal.yaws = [];
+}
+
+// Automatic mode, before the start and in the placement check: which tool watches is decided from
+// what is seen, and may change until the prayer starts (bending down to tap the phone shows a big
+// face for a moment). A face big enough for the face tool = the face; the head and the hips in the
+// picture with a small face or none (phone on the floor, a few metres away) = the body. A change
+// must hold a second. On the lap (or with no body tool) it is always the face.
+function autoEyeStep(b, w, t) {
+  let want = null;
+  if (settings.place === "lap" || (!SIM && diag.pose === "off")) want = false;
+  else if (w != null && w >= AUTO_FACE_W) want = false;
+  else if (b && b.head && b.hips) want = true;
+  if (want == null) return; // nothing to go by in this frame
+  if (want === body.use) { autoEye.cand = null; return; }
+  if (body.use != null) {
+    if (autoEye.cand !== want) { autoEye.cand = want; autoEye.since = t; return; }
+    if (t - autoEye.since < AUTO_DECIDE_MS) return;
+  }
+  body.use = want;
+  autoEye.cand = null;
+  sal.yaws = []; // the face's and the body's head turns are never mixed
+  body.calib = []; body.ref = null;
+}
+// The automatic mode with the body tool: the upright back is learned while waiting for the takbeer
+// (the last 2 s with the hips in the picture), so nothing has to be held still for it.
+function autoBodyLearn(b, t) {
+  if (!b.hips) return;
+  body.calib.push([t, b.up]);
+  while (body.calib.length && t - body.calib[0][0] > 2000) body.calib.shift();
+  const s = body.calib.reduce((a, [, u]) => ({ x: a.x + u.x, y: a.y + u.y, z: a.z + u.z }), { x: 0, y: 0, z: 0 });
+  const n = Math.hypot(s.x, s.y, s.z) || 1;
+  body.ref = { x: s.x / n, y: s.y / n, z: s.z / n };
 }
 function bodyWaitMsg() {
   $("calibMsg").textContent = "ثانية… أداة الجسم بتتحمّل";
@@ -409,7 +477,10 @@ function bowStep(w, t) {
   const bow = obs.bows[obs.bows.length - 1];
   // just back at the sitting place after standing: a bow counts only once the face has settled there
   const visit = stand.visit;
-  const canBow = !visit || visit.seatAt > 0;
+  // automatic, no sitting place known yet: a face that grew well past how it came in from standing went
+  // straight on into a sujood (or it is a standing ruku, undone when the face goes back up): a bow now
+  const deep = (sz) => visit && !visit.seatAt && isAuto() && !det.seat && visit.entry && sz >= AUTO_DEEP * visit.entry.size;
+  const canBow = !visit || visit.seatAt > 0 || deep(det.lastSize);
   // right after the takbeer before ruku a ruku is expected, so a smaller bow is enough
   const soon = hands.rukuSoon && hands.rukuSoon.ptr === app.ptr && t - hands.rukuSoon.at <= RUKU_SOON_MS;
   const need = soon ? RUKU_SOON_SCORE : 1;
@@ -421,6 +492,9 @@ function bowStep(w, t) {
   if (w != null) {
     const size = det.ema;
     det.lastSize = size;
+    // automatic mode: the face was not seen at the start (nothing is learned before it), so its first
+    // sight is upright
+    if (!det.valley) { det.valley = size; det.home = { ...det.pos }; det.upY = det.pos.cy; det.score = 0; }
     if (det.refresh) { // the face shows again after the shoulders ended a bow without it
       if (det.pose === "far") { det.valley = size; det.home = { ...det.pos }; det.upY = det.pos.cy; }
       det.refresh = false;
@@ -432,8 +506,15 @@ function bowStep(w, t) {
       det.upY = det.upY == null ? det.pos.cy : Math.min(det.upY, det.pos.cy);
       if (det.score < 0.3 && det.home) det.home = { cx: det.home.cx * 0.95 + det.pos.cx * 0.05, cy: det.home.cy * 0.95 + det.pos.cy * 0.05, h: det.home.h * 0.95 + det.pos.h * 0.05 };
       followShoulders();
+      // automatic: the face cut off by the top edge for a moment while standing up fits (the first
+      // rak'ah, or just after "sitting down") = stood up (sitting up straighter does not do that)
+      if (isAuto() && !visit && mayStandUp()) {
+        if (det.pos.cy - det.pos.h / 2 > 0.06) det.upSince = 0;
+        else if (!det.upSince) det.upSince = t;
+        else if (t - det.upSince >= AWAY_MS) return goAway(t);
+      }
       if (visit && visitRest(visit, size, t)) return; // not sitting after all: standing again
-      if (!visit || visit.seatAt > 0) {
+      if (!visit || visit.seatAt > 0 || deep(size)) {
         if (det.score >= need) { want = "near"; det.nearBy = "face"; }
         else if (shOn && sh.score >= need) { want = "near"; det.nearBy = "shoulders"; }
       }
@@ -538,9 +619,14 @@ function bowStep(w, t) {
 // Where the face is, compared with where it sits: "top" = well above it, or up at the top edge and
 // above it (standing, peeking in), "big" = much closer than sitting (a standing ruku), "seat" =
 // about where it sits.
-function seatView(p, size) {
+// Automatic mode before sitting down was seen (no sitting place yet): "top" = cut off by the top edge,
+// or - once standing up was seen (high) - high in the picture (peeking in); before that a whole face
+// high in the picture may be sitting, never taken for standing. Never "big" (nothing to compare
+// with): a standing ruku seen from below is first taken for sitting down, and put right when the face
+// goes back up (see goAway).
+function seatView(p, size, high = false) {
   const s = det.seat;
-  if (!s) return "seat";
+  if (!s) return p.cy - p.h / 2 <= 0.06 || (high && p.cy < AUTO_TOP) ? "top" : "seat";
   if (p.cy < s.cy - 0.5 * s.h || (p.cy - p.h / 2 <= 0.06 && p.cy < s.cy - 0.25 * s.h)) return "top";
   return size / s.size >= 1.6 ? "big" : "seat";
 }
@@ -550,7 +636,7 @@ function seatView(p, size) {
 // down: see startVisit).
 function awayStep(t, w) {
   const r = stand.ruku;
-  const view = w != null ? seatView(det.pos, det.ema) : null;
+  const view = w != null ? seatView(det.pos, det.ema, true) : null;
   if (view === "big") {
     if (r) r.last = t; else stand.ruku = { s: t, last: t };
     return;
@@ -563,6 +649,14 @@ function awayStep(t, w) {
       realign(t);
     }
   }
+  // automatic: a face resting whole in the picture, high up, for long is not peeking in (that comes
+  // and goes at the top edge): maybe sitting after all, with the face high in the picture (or higher
+  // than where it sat before)
+  if (view === "top" && isAuto() && det.raw.cy - det.raw.h / 2 >= 0.08) {
+    const st = stand.still;
+    if (!st || Math.abs(det.ema - st.size) > 0.15 * st.size || Math.abs(det.pos.cy - st.cy) > Math.max(0.5 * det.pos.h, 0.04)) stand.still = { t, size: det.ema, cy: det.pos.cy };
+    else if (t - st.t >= AUTO_HIGH_MS && !stand.ruku) { stand.still = null; startVisit(t, true); return; }
+  } else stand.still = null;
   if (view === "seat" && !stand.ruku) startVisit(t);
 }
 
@@ -575,7 +669,7 @@ function backAway(t) {
     obs.bows.push({ s: v.t, e: det.lastSeen, lostLowMs: 0, lostSince: 0 });
     rec.event(t, "ruku (standing)");
   }
-  Object.assign(stand, { on: true, visit: null });
+  Object.assign(stand, { on: true, visit: null, still: null });
   det.pose = "far"; det.cand = null; det.score = 0;
   rec.event(t, "not sitting yet");
   realign(t);
@@ -584,38 +678,71 @@ function backAway(t) {
 // The face left through the top of the picture (judged from where it was last seen): at the top
 // edge and above where it sits, or well above where it sits. (A face that sits right at the top
 // edge can flicker there; standing up is then seen when it stays gone - see takbeerStep.)
+// Automatic, no sitting place yet: also a face last seen high in the picture - if that was a face height
+// or more above where it usually is (a seated face high in the picture, lost for a moment, is not
+// standing up). Where it usually is: its upright place in the prayer, or before the start, its place
+// while waiting.
 function leftAbove() {
   const p = det.raw, s = det.seat;
   if (!p) return false;
-  if (!s) return p.cy - p.h / 2 < 0.06;
+  if (!s) {
+    if (p.cy - p.h / 2 < 0.06) return true;
+    if (!isAuto() || p.cy >= AUTO_TOP) return false;
+    const ref = app.mode === "pray" ? det.home : app.waitHome;
+    return !ref || stand.used || p.cy < ref.cy - p.h; // (its own height: a big face before must not count)
+  }
   return (p.cy - p.h / 2 < 0.06 && p.cy < s.cy - 0.25 * s.h) || p.cy < s.cy - 0.75 * s.h;
 }
 
 // Standing up fits now: "first rak'ah standing" that started by standing up out of the picture (the
 // phone is set for sitting), and not sat down yet (or no bow since sitting down). A prayer started
 // with the face in sight (hands raised) has the phone seeing the person standing: v7's way.
+// Automatic mode (face, phone in front): also a prayer that started in sight, but only before its
+// first bow (a sitting prayer stays sitting); and right after sitting down (within a standing ruku's
+// time) even with one bow counted since: that "sitting" was a standing ruku seen from below. Two bows
+// since (the two sujoods) = really sitting.
 function mayStandUp() {
-  if (settings.posture !== "mixed" || !stand.used) return false;
+  const auto = isAuto();
+  if (auto) { if (settings.place === "lap" || body.use) return false; }
+  else if (settings.posture !== "mixed" || !stand.used) return false;
   const sit = obs.sits[obs.sits.length - 1];
-  return !sit || !obs.bows.some((b) => !b.ignored && !b.virtual && b.s >= sit.t);
+  const real = (b) => !b.ignored && !b.virtual;
+  if (!sit) return stand.used || !obs.bows.some(real);
+  const since = obs.bows.filter((b) => real(b) && b.s >= sit.t).length;
+  if (auto && det.lastSeen - sit.t <= AUTO_UNDO_MS && since <= 1) return true;
+  return since === 0;
 }
 
 function goAway(t) {
   // Since the face came back: the visit going on, or the sitting down it ended in (with no bow since:
   // that was not the real sitting down, so it is undone).
   const v = stand.visit, sit = !v && obs.sits.length ? obs.sits.pop() : null;
-  if (sit) rec.event(t, "undo: sat down");
+  let ruku = null;
+  if (sit) {
+    rec.event(t, "undo: sat down");
+    if (isAuto()) {
+      // automatic: it was a standing ruku seen from below; a bow counted in it was that ruku (it keeps
+      // its times). The place learned there was not the sitting place.
+      const gone = obs.bows.filter((b) => !b.virtual && b.s >= sit.t);
+      if (gone.length) {
+        obs.bows = obs.bows.filter((b) => b.virtual || b.s < sit.t);
+        ruku = { s: gone[0].s, e: gone[gone.length - 1].e ?? det.lastSeen, lostLowMs: 0, lostSince: 0 };
+      } else if (sit.bow) ruku = { s: sit.bow.s, e: det.lastSeen, lostLowMs: 0, lostSince: 0 }; // (satDown took it)
+      det.seat = obs.sits[obs.sits.length - 1]?.seat || null;
+    }
+  }
   const from = v ? v.t : sit?.t, inside = v ? v.inside : sit?.inside;
   // The face came all the way into the picture and went back up and out within a standing ruku's
   // time, with no bow counted in between: a standing ruku seen from below, even if it held still
   // like sitting for a moment (a face only showing at the top edge while standing is not one).
   const len = from == null ? 0 : det.lastSeen - from;
-  if (inside && len >= VISIT_MIN_MS && len <= VISIT_MAX_MS) {
-    obs.bows.push({ s: from, e: det.lastSeen, lostLowMs: 0, lostSince: 0 });
+  if (!ruku && inside && len >= VISIT_MIN_MS && len <= VISIT_MAX_MS) ruku = { s: from, e: det.lastSeen, lostLowMs: 0, lostSince: 0 };
+  if (ruku) {
+    obs.bows.push(ruku);
     rec.event(t, "ruku (standing)");
   }
-  Object.assign(stand, { on: true, used: true, visit: null });
-  det.pose = "far"; det.cand = null; det.score = 0;
+  Object.assign(stand, { on: true, used: true, visit: null, still: null });
+  det.pose = "far"; det.cand = null; det.score = 0; det.upSince = 0;
   rec.event(t, "stood up");
   realign(t);
 }
@@ -623,13 +750,13 @@ function goAway(t) {
 // The face is back at its sitting place after standing. Until it is known that the person sat down,
 // the sitting place learned at the start is the upright place (sitting down itself leans in a bit,
 // so no bow yet).
-function startVisit(t) {
+function startVisit(t, high = false) {
   const s = det.seat || { cx: det.pos.cx, cy: det.pos.cy, h: det.pos.h, size: det.ema };
   stand.on = false;
-  stand.visit = { t, seatAt: 0, inside: false, still: null };
+  stand.visit = { t, seatAt: 0, inside: false, still: null, high }; // high: resting high up for long (automatic)
   det.pose = "far"; det.cand = null; det.score = 0;
   det.valley = s.size; det.home = { cx: s.cx, cy: s.cy, h: s.h };
-  det.upY = null; det.prevHome = null; det.prevValley = 0; det.still = null; det.refresh = false;
+  det.upY = null; det.prevHome = null; det.prevValley = 0; det.still = null; det.refresh = false; det.upSince = 0;
   sh.home = null;
   rec.event(t, "face back");
 }
@@ -642,11 +769,17 @@ function startVisit(t) {
 // returns true then.
 function visitRest(v, size, t) {
   const p = det.pos, s = det.seat;
-  const ratio = s ? size / s.size : 1;
-  const view = seatView(p, size);
+  // (a visit that began by resting high up ends only by going up to the top edge)
+  const view = v.high ? (p.cy - p.h / 2 <= 0.06 ? "top" : "seat") : seatView(p, size, true);
   if (view === "top" || (view === "big" && !v.seatAt)) { backAway(t); return true; }
-  if (det.raw.cy - det.raw.h / 2 >= 0.08) v.inside = true; // the whole face came into the picture
-  const chairLike = ratio >= 0.6 && ratio <= 1.6;
+  if (det.raw.cy - det.raw.h / 2 >= 0.08) { // the whole face came into the picture
+    v.inside = true;
+    if (!v.entry) v.entry = { size, cx: p.cx, cy: p.cy, h: p.h };
+  }
+  // automatic, no sitting place known yet: it can only rest where it is about the size it came in
+  // with (much bigger = gone on into a sujood or a ruku: see bowStep)
+  const ratio = s ? size / s.size : v.entry ? size / v.entry.size : 1;
+  const chairLike = ratio >= 0.6 && ratio <= (s ? 1.6 : AUTO_DEEP);
   // resting there = size within 15% and place within half a face (at least 4% of the picture: faces
   // jitter); the rest only counts while the face looks like sitting on the chair
   const still = chairLike && v.still && Math.abs(size - v.still.size) <= 0.15 * v.still.size && Math.abs(p.cy - v.still.cy) <= Math.max(0.5 * p.h, 0.04);
@@ -665,13 +798,21 @@ function visitRest(v, size, t) {
 function sitConfirmed(t, settled) {
   const v = stand.visit;
   stand.visit = null;
-  obs.sits.push({ t: v.t, inside: v.inside });
+  const sit = { t: v.t, inside: v.inside };
+  obs.sits.push(sit);
   if (settled) {
     det.valley = det.lastSize; det.home = { ...det.pos }; det.score = 0; det.upY = det.pos.cy;
     if (sh.seen) sh.home = { sy: sh.sy, sw: sh.sw };
   }
+  learnSeat(sit);
   rec.event(t, "sat down");
   realign(t);
+}
+// Automatic mode: where the face sits from now on (it was not known before the prayer).
+function learnSeat(sit) {
+  if (!isAuto() || !det.home || !det.valley) return;
+  sit.seat = { cx: det.home.cx, cy: det.home.cy, h: det.home.h, size: det.valley };
+  det.seat = sit.seat;
 }
 
 // Standing -> sitting on the chair, when the phone sees the person standing too (the face never
@@ -680,24 +821,31 @@ function sitConfirmed(t, settled) {
 // back up). After 2 s of rest the "bow" is turned into a "sat down" moment.
 function satDown(size, t) {
   const bow = obs.bows[obs.bows.length - 1];
-  if (settings.posture !== "mixed" || stand.used || obs.sits.length || !bow || bow.e != null || bow.virtual || !det.prevHome || !det.pos) return false;
+  const mixedLike = settings.posture === "mixed" || (isAuto() && settings.place !== "lap" && !body.use);
+  if (!mixedLike || stand.used || obs.sits.length || !bow || bow.e != null || bow.virtual || !det.prevHome || !det.pos) return false;
+  // automatic: sitting down can only come in rak'ah 1 (before it, at most a standing ruku was seen)
+  if (isAuto() && obs.bows.filter((b) => !b.ignored && !b.virtual).length > 2) return false;
   const ref = det.still;
   // resting = size within 15% and place within half a face (at least 4% of the picture: faces jitter)
   if (!ref || Math.abs(size - ref.size) > 0.15 * ref.size || Math.abs(det.pos.cy - ref.cy) > Math.max(0.5 * det.pos.h, 0.04)) {
     det.still = { size, cy: det.pos.cy, t };
     return false;
   }
-  const top = det.prevUpY ?? det.prevHome.cy; // the highest the face was while upright before the bow
+  // the highest the face was while upright before the bow (automatic: its usual upright place, so one
+  // stray frame high up does not make a drop)
+  const top = isAuto() ? det.prevHome.cy : det.prevUpY ?? det.prevHome.cy;
   const drop = (det.pos.cy - top) / det.pos.h; // in face heights
   if (t - ref.t < 2000 || drop < 1.5 || det.peak > (det.prevValley || det.valley) * 1.15) return false;
   obs.bows.pop();
-  obs.sits.push({ t: bow.s });
+  const sit = { t: bow.s, bow }; // (the bow it was taken from, in case this turns out to be a ruku)
+  obs.sits.push(sit);
   // upright again, right away, at the new (sitting) place
   det.pose = "far"; det.cand = null; det.still = null;
   det.valley = det.lastSize;
   det.home = { ...det.pos };
   det.score = 0;
   det.upY = det.pos.cy;
+  learnSeat(sit);
   rec.event(t, "sat down");
   realign(t);
   return true;
@@ -754,10 +902,13 @@ function realign(t, final = false) {
   if (app.mode !== "pray" && !final) return;
   app.alignedAt = t;
   // rak'ahs prayed standing in sight of the phone ("first rak'ah standing" that began out of the
-  // picture: none, its standing ruku is often unseen)
-  const standing = settings.posture === "stand" ? app.n : settings.posture === "mixed" && !stand.used ? 1 : 0;
+  // picture: none, its standing ruku is often unseen). Automatic: "first rak'ah standing" once a
+  // standing part or a sitting down was seen; watched by the body = a standing prayer.
+  const auto = isAuto();
+  const mixed = settings.posture === "mixed" || (auto && !body.use && (stand.used || obs.sits.length > 0));
+  const standing = settings.posture === "stand" || (auto && body.use) ? app.n : mixed && !stand.used ? 1 : 0;
   const res = alignPrayer({
-    n: app.n, bows: obs.bows, raises: obs.raises, sits: obs.sits, mixed: settings.posture === "mixed", standing,
+    n: app.n, bows: obs.bows, raises: obs.raises, sits: obs.sits, mixed, standing,
     handsOn: SIM || diag.hands === "ready", t0: app.t0, now: t,
   });
   const tl = timeline({ steps: app.steps, pairs: res.pairs, bows: res.bows, raises: obs.raises, t0: app.t0, now: t, armMs: HANDS_ARM_MS });
@@ -795,7 +946,9 @@ function matchText() {
 // face height in the picture (%), head turn (%), bowed (1/0), shoulders' lean score (%), hands seen.
 // Size and height are -1 when no face, the shoulders' score when they are not seen, hands when
 // the hand tool is not running. Standing prayer by the body: the back's bend (degrees, -1 = no
-// body) and arms raised (1/0); the head turn is then the body's.
+// body) and arms raised (1/0); the head turn is then the body's. From v13: the face's real width
+// (per mille of the picture width, -1 = no face) and standing (0 = no, 1 = standing out of the
+// picture, 2 = the face back and not yet known to be sitting).
 const rec = {
   t0: 0, lastAt: 0, samples: [], events: [],
   reset() { this.t0 = 0; this.lastAt = 0; this.samples = []; this.events = []; },
@@ -811,7 +964,9 @@ const rec = {
     const hc = handDetector && wantHands() ? lastHandCount : -1;
     const bl = body.use && body.seen ? Math.round(body.lean) : -1;
     const arms = body.seen && (body.use ? body.last?.raised : body.last?.armsUp) ? 1 : 0;
-    this.samples.push(`${this.rel(t)}:${size},${Math.round(det.score * 100)},${cy},${Math.round(det.lastYaw * 100)},${det.pose === "near" ? 1 : 0},${shs},${hc},${bl},${arms}`);
+    const fw = det.seen ? Math.round(det.ema * 1000) : -1;
+    const st = stand.on ? 1 : stand.visit ? 2 : 0;
+    this.samples.push(`${this.rel(t)}:${size},${Math.round(det.score * 100)},${cy},${Math.round(det.lastYaw * 100)},${det.pose === "near" ? 1 : 0},${shs},${hc},${bl},${arms},${fw},${st}`);
   },
   event(t, what) { if (this.t0) this.events.push(`${this.rel(t)}:${what}`); },
 };
@@ -828,6 +983,7 @@ function wantHands() {
 function wantPose() {
   if (app.mode === "check") return true;
   if (body.use !== false && settings.posture === "stand" && (app.mode === "calib" || app.mode === "takbeer")) return true;
+  if (isAuto() && app.mode === "takbeer") return true; // automatic: the arms for the takbeer, and the whole body
   return app.mode === "pray" && !stand.on;
 }
 
@@ -873,22 +1029,31 @@ function takbeerMsg() {
   const msg = $("calibMsg");
   if (settings.posture === "mixed") msg.textContent = "قوم اقف وكبّر. العدّ هيبدأ أول ما تقوم.";
   else if (body.use && !body.seen) msg.textContent = "مش شايفك. اقف قدام الموبايل بحيث يبان جسمك كله.";
-  else if (diag.hands === "loading" && !body.use) msg.textContent = "ثانية… أداة الإيد لسه بتتحمّل";
+  else if (diag.hands === "loading" && !body.use && !(isAuto() && diag.pose === "ready")) msg.textContent = "ثانية… أداة الإيد لسه بتتحمّل";
+  else if (isAuto() && !body.use) msg.textContent = det.seen ? "كبّر وابدأ الصلاة، قاعد أو واقف. العدّ بيبدأ لوحده." : "مش شايف وشك. لو قمت وقفت، العدّ بيبدأ لوحده.";
   else msg.textContent = "ارفع إيدك وكبّر تكبيرة الإحرام";
 }
 function takbeerStep(up, t, w) {
   const mixed = settings.posture === "mixed";
-  if (mixed && w == null && det.lastSeen) {
+  // standing up starts the clock too: "first rak'ah standing", and the automatic mode watched by the
+  // face (not on the lap). Automatic: only from what is seen - the face left through the top, or was
+  // last seen in the upper half and stays gone, or nothing at all was seen since the camera started.
+  // (Not while the body tool sees the whole person: then the phone sees him, he is not above it.)
+  const wholeBody = (body.seen && body.last?.head && body.last?.hips) || autoEye.cand === true;
+  const auto = isAuto() && settings.place !== "lap" && !body.use && !wholeBody;
+  if ((mixed || auto) && w == null && det.lastSeen) {
     const gone = t - det.lastSeen;
-    if ((leftAbove() && gone >= AWAY_MS) || gone >= AWAY_ANY_MS) return startPrayer(det.lastSeen, true);
+    if ((leftAbove() && gone >= AWAY_MS) || (gone >= AWAY_ANY_MS && (mixed || det.raw.cy < 0.5))) return startPrayer(det.lastSeen, true);
   }
   // ...or it went up to the top of the picture and stays there (still peeking in while standing)
-  if (mixed && w != null && det.pos) {
+  if ((mixed || auto) && w != null && det.pos) {
     if (seatView(det.pos, det.ema) !== "top") det.upSince = 0;
     else if (!det.upSince) det.upSince = t;
     else if (t - det.upSince >= AWAY_MS) return startPrayer(det.upSince, true);
   }
-  if (diag.hands === "off" && !SIM && !mixed && !body.use) return startPrayer(t); // no hand tool on this phone: start now
+  if (auto && !det.lastSeen && !body.lastSeen && app.waitFrom && t - app.waitFrom >= AUTO_NONE_MS) return startPrayer(app.waitFrom, true);
+  // no hand tool on this phone: start now (automatic: unless the body tool can see the arms)
+  if (diag.hands === "off" && !SIM && !mixed && !body.use && (!isAuto() || diag.pose === "off")) return startPrayer(t);
   takbeerMsg();
   const at = handsEdge(up, t); // the hands stay "up" into the prayer, so this raise is not counted again
   if (at) startPrayer(at);
@@ -1089,7 +1254,7 @@ async function keepAwake() {
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch { wakeLock = null; }
 }
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && (app.mode === "pray" || app.mode === "calib")) keepAwake();
+  if (document.visibilityState === "visible" && (app.mode === "pray" || app.mode === "calib" || app.mode === "takbeer")) keepAwake();
 });
 
 // ---------- status line (so a problem on the phone can be seen and reported) ----------
@@ -1462,7 +1627,7 @@ function drawOverlay(box, handRes, video, bothUp, shoulders, b = null) {
 const placeCheck = { goodUntil: 0, shAt: 0 };
 function checkStep(w, bothUp, handCount, t, pos, shoulders, b = null) {
   const msg = $("calibMsg");
-  decideBody(b, w);
+  decideBody(b, w, t);
   if (body.use) return bodyCheckStep(b, t);
   if (body.use == null && settings.posture === "stand" && diag.pose === "loading") { msg.textContent = "ثانية… أداة الجسم بتتحمّل"; return; }
   if (bothUp) placeCheck.goodUntil = t + 1500; // keep the good news on screen a moment
@@ -1505,19 +1670,24 @@ function show(id) {
   for (const s of document.querySelectorAll(".screen")) s.hidden = s.id !== id;
 }
 
+// The hint under the title: the way of praying's, else the phone place's (on the lap the automatic
+// mode is sitting only, so its own hint).
+const hintText = () => (isAuto() && settings.place === "lap" ? PLACES.lap.hint : POSTURES[settings.posture].hint || PLACES[settings.place].hint);
+
 async function choosePrayer(key) {
   initAudio();
   keepAwake();
   resetTracking();
   app.key = key;
-  app.mode = "calib";
+  // automatic: nothing to learn first, straight to waiting for the takbeer (or for standing up)
+  app.mode = isAuto() ? "takbeer" : "calib";
   $("calibTitle").textContent = `صلاة ${PRAYERS[key].name}`;
   $("calibMsg").textContent = "بنشغّل الكاميرا…";
-  $("calibHint").textContent = POSTURES[settings.posture].hint || PLACES[settings.place].hint;
+  $("calibHint").textContent = hintText();
   $("calibBar").style.width = "0%";
-  $("calibBar").parentElement.hidden = false;
+  $("calibBar").parentElement.hidden = isAuto();
   $("calibMsg").classList.remove("good");
-  $("startNow").hidden = true;
+  $("startNow").hidden = !isAuto();
   $("calibCancel").textContent = "إلغاء";
   show("calib");
   if (SIM) { $("calibMsg").textContent = "وضع التجربة: مفيش كاميرا"; return; }
@@ -1533,7 +1703,7 @@ async function startPlacementCheck() {
   $("calibTitle").textContent = "اختبار مكان الموبايل";
   $("calibMsg").textContent = "بنشغّل الكاميرا…";
   $("calibMsg").classList.remove("good");
-  $("calibHint").textContent = POSTURES[settings.posture].hint || PLACES[settings.place].hint;
+  $("calibHint").textContent = hintText();
   $("calibBar").parentElement.hidden = true;
   $("startNow").hidden = true;
   $("calibCancel").textContent = "رجوع";
@@ -1560,9 +1730,16 @@ function startPrayer(t, away = false) {
   app.alignedAt = t;
   app.cued = new Set();
   obs.bows = []; obs.raises = []; obs.sits = [];
-  Object.assign(stand, { on: away, used: away, visit: null, ruku: null });
+  Object.assign(stand, { on: away, used: away, visit: null, ruku: null, still: null });
   det.pose = "far"; det.cand = null;
   sh.home = null;
+  if (isAuto()) {
+    if (body.use == null) body.use = false; // nothing decided it: the face watches
+    det.seat = null; // the sitting place is learned when sitting down is seen
+    det.upSince = 0;
+    // the face as it is at the takbeer is upright: bows are measured from it (nothing learned before)
+    if (!away && !body.use && det.seen && det.ema) { det.valley = det.ema; det.lastSize = det.ema; det.home = { ...det.pos }; det.upY = det.pos.cy; det.score = 0; }
+  }
   rec.start(t);
   rec.event(t, `start ${app.key} ${settings.posture}/${settings.place} sens ${settings.sens} hands ${diag.hands} body ${diag.pose}${body.use ? " (watched by the body)" : ""}`);
   if (away) rec.event(t, "stood up");
@@ -1609,8 +1786,9 @@ function traceText(r) {
   const head = `prayer-counter v${r.v ?? "?"} ${r.name} ${new Date(r.t0).toISOString()} posture=${r.posture} place=${r.place} sens=${r.trace.sens}`;
   const steps = r.segs.map((s, i) => `${i}:${s.label}=${((s.end - s.start) / 1000).toFixed(1)}s`).join(" | ");
   const match = r.trace.match ? `\nMATCH ${r.trace.match}` : "";
+  const v = r.v ?? 0;
   const fields = ["t:size,score,y,turn,bowed", "t:size,score,y,turn,bowed,shoulders", "t:size,score,y,turn,bowed,shoulders,hands",
-    "t:size,score,y,turn,bowed,shoulders,hands,body,arms"][Math.max(0, Math.min(3, (r.v ?? 0) - 7))];
+    "t:size,score,y,turn,bowed,shoulders,hands,body,arms", "t:size,score,y,turn,bowed,shoulders,hands,body,arms,face,standing"][v >= 13 ? 4 : Math.max(0, Math.min(3, v - 7))];
   return `${head}\nSTEPS ${steps}\nEVENTS ${r.trace.events}${match}\nSAMPLES ${fields} ${r.trace.samples}`;
 }
 
@@ -1686,9 +1864,12 @@ function renderChip(t) {
   const chip = $("chip");
   let cls = "seen", text = "شايفك";
   const gone = body.use ? !body.seen && t - body.lastSeen > 1000 : !det.seen && t - det.lastSeen > 1000;
-  if (stand.on) text = "واقف"; // standing, above the picture: nothing to see until sitting down
+  // standing, above the picture: nothing to see until sitting down (automatic: also while the face is
+  // back but not yet known to be sitting)
+  if (stand.on || (isAuto() && stand.visit)) text = "واقف";
   else if (det.pose === "near") { cls = "near"; text = "قريب"; }
   else if (gone) { cls = "lost"; text = "مش شايفك"; }
+  else if (isAuto() && !body.use) text = "قاعد"; // automatic: says what it thinks
   chip.className = `chip ${cls}`;
   chip.textContent = text;
 }
@@ -1771,8 +1952,8 @@ $("histList").addEventListener("click", (e) => {
 function showPlace() {
   for (const b of document.querySelectorAll("#placeButtons .place")) b.setAttribute("aria-pressed", String(b.dataset.place === settings.place));
   for (const b of document.querySelectorAll("#postureButtons .place")) b.setAttribute("aria-pressed", String(b.dataset.posture === settings.posture));
-  $("placeRow").hidden = settings.posture !== "sit"; // standing always uses the floor
-  $("postureHint").textContent = POSTURES[settings.posture].hint || "";
+  $("placeRow").hidden = settings.posture !== "sit" && !isAuto(); // standing always uses the floor
+  $("postureHint").textContent = isAuto() ? hintText() : POSTURES[settings.posture].hint || "";
   $("sens").value = String(settings.sens);
   sensText();
 }
@@ -1868,6 +2049,7 @@ if (SIM) {
     shouldersOf: (res, video) => shouldersOf(res, video),
     noteHands: (res, box, video, counted, t) => noteHands(res, box, video, counted, t),
     sal: () => sal,
+    auto: () => ({ eye: body.use, seat: det.seat, ref: body.ref }),
     diag: () => diag,
     match: () => app.match,
     draw: (box, handRes, video, bothUp, shoulders) => drawOverlay(box, handRes, video, bothUp, shoulders),

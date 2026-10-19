@@ -170,6 +170,7 @@ body.show-diag .diag { display: block; }
 .rk-row.avg { grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 1.2fr); }
 .rk-name small { font: 400 .8rem var(--f-body); }
 .places.alerts { grid-template-columns: repeat(3, 1fr); }
+.places.postures { grid-template-columns: 1fr 1fr; }
 .set-group { display: flex; flex-direction: column; gap: 6px; }
 .trace { width: 100%; height: 8rem; margin-bottom: 8px; font: 11px/1.4 var(--f-num); direction: ltr; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
 .calib-msg.good { color: var(--ok); }
