@@ -5,12 +5,14 @@
 (async () => {
   localStorage.clear();
   let rnd = 11; const noise = () => { rnd = (rnd * 16807) % 2147483647; return 1 + ((rnd / 2147483647) - 0.5) * 0.08; };
-  // o: cy (face height in the picture), hands (both hands up), yaw (head turn), sh (shoulders {sy, sw})
+  // o: cy (face height in the picture), hands (both hands up), yaw (head turn), sh (shoulders {sy, sw}),
+  // arms (true/false: the body tool is seen, with both arms up or not)
   const feed = (w, ms, o = {}) => {
     for (let i = 0; i < ms; i += 100) {
       const ww = w == null ? null : w * noise();
       const s = o.sh ? { sy: o.sh.sy, sw: o.sh.sw * (1 + (noise() - 1) / 2) } : null;
-      __pc.feed(ww, o.yaw ?? 0, undefined, o.hands ?? false, ww == null ? null : { cx: 0.5, cy: o.cy ?? 0.45, h: o.h ?? ww * 1.3 }, s);
+      const b = o.arms == null ? null : { up: { x: 0, y: -1, z: 0 }, raised: false, armsUp: o.arms, yaw: 0, head: true, hips: false, feet: false, lm: null };
+      __pc.feed(ww, o.yaw ?? 0, undefined, o.hands ?? false, ww == null ? null : { cx: 0.5, cy: o.cy ?? 0.45, h: o.h ?? ww * 1.3 }, s, b);
     }
   };
   const raise = (w = 0.3, cy, sh) => { feed(w, 600, { hands: true, cy, sh }); feed(w, 500, { cy, sh }); };
@@ -95,6 +97,12 @@
   const shFeed = (w, ms, o = {}) => feed(w, ms, { ...o, sh: w == null || (o.cy ?? 0.45) > 0.6 ? suj : w > 0.35 ? ruku : up });
   const shRakAll = () => { raise(0.3, 0.45, up); shFeed(0.42, 6000); shFeed(0.3, 300); raise(0.3, 0.45, up); shFeed(0.3, 2000); shFeed(0.45, 1000, { cy: 0.7 }); shFeed(null, 2500); shFeed(0.45, 4000, { cy: 0.7 }); shFeed(0.3, 4000); shFeed(0.45, 1000, { cy: 0.7 }); shFeed(null, 2500); shFeed(0.45, 4000, { cy: 0.7 }); };
   await start("dhuhr", "sit"); shFeed(0.3, 30000); shRakAll(); shFeed(0.3, 30000); shRakAll(); shFeed(0.3, 15000); raise(0.3, 0.45, up); shFeed(0.3, 30000); shRakAll(); shFeed(0.3, 30000); shRakAll(); salam(0.3, 0.45, up); out.dhuhrWithShoulders = sum(); done();
+  // v12: the takbeers and "sami' Allahu" raises too quick for the hand tool, seen only by the body tool's arms
+  { const armsRaise = () => { feed(0.3, 500, { arms: true }); feed(0.3, 400, { arms: false }); };
+    const armsRak = () => { armsRaise(); feed(0.42, 6000, { arms: false }); feed(0.3, 300, { arms: false }); armsRaise(); feed(0.3, 2000, { arms: false }); feed(0.45, 1000, { cy: 0.7, arms: false }); feed(null, 2500, { arms: false }); feed(0.45, 4000, { cy: 0.7, arms: false }); feed(0.3, 4000, { arms: false }); feed(0.45, 1000, { cy: 0.7, arms: false }); feed(null, 2500, { arms: false }); feed(0.45, 4000, { cy: 0.7, arms: false }); };
+    await start("fajr", "sit"); feed(0.3, 30000, { arms: false }); armsRak(); feed(0.3, 30000, { arms: false }); armsRak(); salam();
+    const ev = __pc.history()[0]?.trace.events || "";
+    out.armsOnlyRaises = `${sum()} | raises by the arms: ${(ev.match(/raise \(arms\)/g) || []).length}`; done(); }
   // a sujood with the face hidden 6 s: the shoulders come back up 1.5 s before the face is found
   await start("fajr", "sit"); feed(0.3, 30000, { sh: up }); shRak(true); feed(0.3, 30000, { sh: up }); raise(0.3, 0.45, up); feed(0.42, 6000, { sh: ruku }); feed(0.3, 300, { sh: up }); raise(0.3, 0.45, up); feed(0.3, 2000, { sh: up }); feed(0.45, 1000, { cy: 0.7, sh: suj }); feed(null, 4500, { sh: suj }); feed(null, 1500, { sh: up }); feed(0.3, 3000, { sh: up }); feed(0.45, 1000, { cy: 0.7, sh: suj }); feed(null, 2500, { sh: suj }); feed(0.45, 3000, { cy: 0.7, sh: suj }); salam(0.3, 0.45, up); out.faceHiddenShouldersUp = sum(); done();
 
@@ -116,3 +124,4 @@
 // mixedA_seatAtTopEdge 13 (missed 1); v11: mixedA_peekAtTop_bigRuku 13 (missed 0, the standing ruku counted);
 // mixedA_dhuhr 26 (missed 1); shouldersRuku 13 (sameWithoutShoulders: missed 2);
 // dhuhrWithShoulders 26; faceHiddenShouldersUp 13 (that sujood ends when the shoulders come up).
+// v12: armsOnlyRaises 13 (missed 0) with 4 raises by the arms.

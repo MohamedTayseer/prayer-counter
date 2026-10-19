@@ -4,6 +4,18 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v12 — the takbeer before ruku is also seen by the body tool
+- In all the records so far, the takbeer just before each ruku was never seen
+  with both hands up (the "sami' Allahu" raises were), although both hands go
+  up beside the face. It is quick, and the hand tool looks only every other
+  frame.
+- The body tool follows the arms all the time: when it sees both wrists come
+  up above the shoulders, one on each side of the head, that is a raise too
+  (only while upright, as before). One hand, hands on the chest, or arms
+  spread wide do not count.
+- The prayer record says which tool saw each raise ("raise (hands)",
+  "raise (arms)", or both), and notes each time the arms came up.
+
 ## v11 — first rak'ah standing, salam and takbeer from a real Dhuhr
 - Found from a real record (Dhuhr, first rak'ah standing, 19 Oct): while
   standing, the face did not leave the picture: it peeked in at the top edge,

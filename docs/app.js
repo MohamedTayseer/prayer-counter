@@ -15,9 +15,9 @@
 // eye: the bend of the back, the arms and the head turn (see bodyStep).
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 11;
+const APP_VERSION = 12;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=24";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=25";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -264,7 +264,13 @@ function onObservation(w, yaw, t, handsUp = false, pos = null, shoulders = null,
   if (app.mode === "calib" || app.mode === "check") decideBody(b, w);
   // standing prayer by the body: its arms are the hands and its head turn is the turn (nothing
   // while it is still being decided, so the face's and the body's turns are never mixed)
+  // Watched by the face: the body tool's arms count too (it follows a quick takbeer that the hand
+  // tool, looking only every other frame, can miss). Which one saw it goes into the record.
+  const armsUp = !body.use && !!(b && b.armsUp);
+  if (app.mode === "pray") noteArms(armsUp, t);
+  const raiseBy = body.use ? "body" : handsUp && armsUp ? "hands+arms" : handsUp ? "hands" : "arms";
   if (body.use) handsUp = !!(b && b.raised);
+  else if (armsUp) handsUp = true;
   const turn = body.use ? (b ? b.yaw : null) : body.use === false && w != null ? yaw : null; // (b.yaw: null without the head)
   if (turn != null) {
     if (body.use) body.yawAt = t;
@@ -285,7 +291,7 @@ function onObservation(w, yaw, t, handsUp = false, pos = null, shoulders = null,
   }
 
   const raiseAt = handsEdge(handsUp && uprightNow(), t);
-  if (raiseAt) onRaise(raiseAt, t);
+  if (raiseAt) onRaise(raiseAt, t, raiseBy);
   if (t - app.alignedAt >= 1000) realign(t); // pauses keep growing: the best match can change with time
   salamCheck(body.use ? b?.yaw != null : w != null, det.lastYaw, t);
   rec.sample(t);
@@ -725,9 +731,9 @@ function handsEdge(up, t) {
 
 // Both hands went up: the person is upright. The raise is kept as a clue for the matching
 // (before / after ruku, standing up for rak'ah 3); a bow that still seems to go on is over.
-function onRaise(at, t) {
+function onRaise(at, t, by = "hands") {
   obs.raises.push({ t: at });
-  rec.event(t, "raise");
+  rec.event(t, `raise (${by})`);
   if (det.pose === "near") {
     const bow = obs.bows[obs.bows.length - 1];
     if (bow && bow.e == null) bow.e = Math.max(at, bow.s);
@@ -804,7 +810,7 @@ const rec = {
     const shs = sh.seen && sh.home ? Math.round(sh.score * 100) : -1;
     const hc = handDetector && wantHands() ? lastHandCount : -1;
     const bl = body.use && body.seen ? Math.round(body.lean) : -1;
-    const arms = body.use && body.seen && body.last?.raised ? 1 : 0;
+    const arms = body.seen && (body.use ? body.last?.raised : body.last?.armsUp) ? 1 : 0;
     this.samples.push(`${this.rel(t)}:${size},${Math.round(det.score * 100)},${cy},${Math.round(det.lastYaw * 100)},${det.pose === "near" ? 1 : 0},${shs},${hc},${bl},${arms}`);
   },
   event(t, what) { if (this.t0) this.events.push(`${this.rel(t)}:${what}`); },
@@ -1259,7 +1265,7 @@ function frame() {
         try {
           const pres = poseDetector.detectForVideo(video, performance.now());
           lastShoulders = shouldersOf(pres, video);
-          lastBody = bodyOf(pres);
+          lastBody = bodyOf(pres, (video.videoWidth || 640) / (video.videoHeight || 480));
         } catch (e) { lastShoulders = null; lastBody = null; diag.err = "body: " + String(e?.message || e); }
       }
     } catch (e) { diag.err = String(e?.message || e); }
@@ -1325,9 +1331,23 @@ function noteHands(res, faceBox, video, counted, t) {
   } else if (handLog.since && t - handLog.last > 400) flushHands(t);
 }
 function flushHands(t) {
-  if (!handLog.since) return;
-  rec.event(t, `hands up ${((handLog.last - handLog.since) / 1000).toFixed(1)}s ${handLog.best.text}${handLog.counted ? " = raise" : ""}`);
-  handLog.since = 0;
+  if (handLog.since) {
+    rec.event(t, `hands up ${((handLog.last - handLog.since) / 1000).toFixed(1)}s ${handLog.best.text}${handLog.counted ? " = raise" : ""}`);
+    handLog.since = 0;
+  }
+  if (armLog.since) {
+    rec.event(t, `arms up ${((armLog.last - armLog.since) / 1000).toFixed(1)}s`);
+    armLog.since = 0;
+  }
+}
+// ...and each time the body tool sees both arms up beside the head (prayers watched by the face).
+const armLog = { since: 0, last: 0 };
+function noteArms(up, t) {
+  if (up) { if (!armLog.since) armLog.since = t; armLog.last = t; }
+  else if (armLog.since && t - armLog.last > 400) {
+    rec.event(t, `arms up ${((armLog.last - armLog.since) / 1000).toFixed(1)}s`);
+    armLog.since = 0;
+  }
 }
 
 function pickFace(list) {
@@ -1349,9 +1369,11 @@ function shouldersOf(res, video) {
 
 // The whole body from the body tool (null when its shoulders are not seen). up = the direction of
 // the back (3D, from the middle of the hips to the middle of the shoulders, length 1); raised =
-// both wrists above the shoulders along the back; yaw = the nose between the ears (0 = facing
-// the phone); head / hips / feet = in the picture. lm = the points in the picture, for drawing.
-function bodyOf(res) {
+// both wrists above the shoulders along the back; armsUp = both arms up beside the head as seen in
+// the picture (for prayers watched by the face, where the hips are out of the picture); yaw = the
+// nose between the ears (0 = facing the phone); head / hips / feet = in the picture. lm = the
+// points in the picture, for drawing. aspect = picture width / height.
+function bodyOf(res, aspect = 0.75) {
   const lm = res?.landmarks?.[0], wl = res?.worldLandmarks?.[0];
   if (!lm || !wl || lm.length < 29 || wl.length < 29) return null;
   const vis = (i) => lm[i].visibility ?? 0;
@@ -1364,10 +1386,16 @@ function bodyOf(res) {
   const above = (w) => { const d = sub(w, S); return d.x * up.x + d.y * up.y + d.z * up.z; }; // metres above the shoulders
   const raised = vis(15) > 0.3 && vis(16) > 0.3 && above(wl[15]) > -0.02 && above(wl[16]) > -0.02;
   const inPic = (i) => vis(i) > 0.5 && lm[i].x > 0 && lm[i].x < 1 && lm[i].y > 0 && lm[i].y < 1;
+  // both wrists above the shoulder line, one on each side of the nose, not far out (in shoulder
+  // widths, measured in the picture): the hands beside the head, as for a takbeer
+  const shW = Math.abs(lm[11].x - lm[12].x) || 1e-3, shY = (lm[11].y + lm[12].y) / 2, nx = lm[0].x;
+  const wristUp = (i) => inPic(i) && lm[i].y < shY - 0.15 * shW * aspect && Math.abs(lm[i].x - nx) <= 1.3 * shW;
+  const armsUp = inPic(0) && wristUp(15) && wristUp(16) && (lm[15].x - nx) * (lm[16].x - nx) < 0
+    && Math.min(Math.abs(lm[15].x - nx), Math.abs(lm[16].x - nx)) >= 0.2 * shW;
   // the head turn only when the nose and both ears are seen (not guessed from outside the picture)
   const gap = Math.abs(lm[7].x - lm[8].x);
   const yaw = inPic(0) && inPic(7) && inPic(8) && gap > 1e-3 ? (lm[0].x - (lm[7].x + lm[8].x) / 2) / gap : null;
-  return { up, raised, yaw, head: inPic(0), hips: inPic(23) && inPic(24), feet: inPic(27) || inPic(28), lm };
+  return { up, raised, armsUp, yaw, head: inPic(0), hips: inPic(23) && inPic(24), feet: inPic(27) || inPic(28), lm };
 }
 
 // The camera picture gets a box around the face, a line across the shoulders, and a dot on each

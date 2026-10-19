@@ -10,13 +10,19 @@ export function parseRecord(text) {
     const i = e.indexOf(":");
     return { t: Number(e.slice(0, i)) * 100, what: e.slice(i + 1) };
   });
+  // "near"/"far" may say what saw them ("near (shoulders)", "far (body)", "far (hands)"); twitches
+  // are undone ("undo: short bow" drops the bow, "undo: short rise" makes it go on)
   const bows = [];
   for (const e of events) {
-    if (e.what === "near") bows.push({ s: e.t, e: null });
-    else if (e.what === "far" && bows.length && bows[bows.length - 1].e == null) bows[bows.length - 1].e = e.t;
+    const last = bows[bows.length - 1];
+    if (/^near\b/.test(e.what)) bows.push({ s: e.t, e: null });
+    else if (/^far\b/.test(e.what) && last && last.e == null) last.e = e.t;
+    else if (e.what === "undo: short bow" && last) bows.pop();
+    else if (e.what === "undo: short rise" && last) last.e = null;
   }
-  // raises: every event that came from a hand raise
-  const raises = events.filter((e) => /raise/.test(e.what)).map((e) => ({ t: e.t, what: e.what }));
+  // raises: every event that came from a hand raise ("raise", "raise (arms)", v6's "raise ignored"
+  // and "fix: behind, raise = ..."; not the "hands up ... = raise" notes of v9 and later)
+  const raises = events.filter((e) => /^raise|^fix: .*raise/.test(e.what)).map((e) => ({ t: e.t, what: e.what }));
   const end = events.find((e) => e.what.startsWith("end"))?.t ?? null;
   return { n, bows, raises, end };
 }
