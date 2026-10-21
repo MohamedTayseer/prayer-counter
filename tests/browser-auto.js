@@ -124,18 +124,43 @@ window.autoTests = async () => {
     feed(null, 3500); feed(up0, 18000, { cy: cy0 }); group(); feed(up0, 12000, { cy: cy0 }); group(); feed(up0, 12000, { cy: cy0 }); raise(up0, cy0); feed(up0, 7000, { cy: cy0 }); group(); feed(up0, 10000, { cy: cy0 }); group(); salam(up0, cy0);
     out.ishaLike = sum(); done(); }
 
+  // ---- v14 (21 Oct records) ----
+  // Dhuhr: standing at the table the face came and went (big, cut off by the top edge) while the body tool
+  // saw the head and the hips (not the feet): the face must watch, not the body
+  { const bt = () => ({ up: { x: 0, y: -1, z: 0 }, raised: false, armsUp: false, yaw: 0, head: true, hips: true, feet: false, lm: null });
+    await go("fajr");
+    for (let i = 0; i < 12; i++) __pc.feed(null, 0, undefined, false, null, null, bt());
+    for (let i = 0; i < 30; i++) { const on = i % 3 === 0; __pc.feed(on ? 0.25 : null, 0, undefined, false, on ? { cx: 0.5, cy: 0.08, h: 0.2 } : null, null, bt()); }
+    const eye = __pc.auto().eye;
+    feed(null, 40000); feed(0.13, 100, { cy: 0.1 }); feed(0.14, 300, { cy: 0.3 }); feed(0.13, 2000, { cy: 0.42 }); chairRak(); rest2();
+    out.tableStandingBodySeen = `${sum()} | eye ${eye === false ? "face" : eye ? "BODY" : "none"}`; done(); }
+  // Fajr: a deep sujood cut in two by a flicker (the face box smaller at the bottom edge for 0.6 s; two
+  // pieces under 1 s each): one sujood, not none (v13 threw both away)
+  { const splitRak = () => { raise(); feed(0.42, 6000); feed(0.3, 300); raise(); feed(0.3, 2000); feed(0.45, 700, { cy: 0.75 }); feed(0.3, 600, { cy: 0.75 }); feed(0.45, 700, { cy: 0.75 }); feed(0.3, 3000); feed(0.45, 1000, { cy: 0.7 }); feed(null, 2500); feed(0.45, 4000, { cy: 0.7 }); };
+    await start("fajr"); feed(0.3, 30000); splitRak(); feed(0.3, 30000); rak(); salam(); out.sujoodSplitByFlicker = sum(); done();
+    document.querySelector('[data-posture="sit"]').click(); document.querySelector('[data-key="fajr"]').click(); await new Promise((r) => setTimeout(r, 30)); feed(0.3, 3500); feed(0.3, 1500, { hands: true });
+    feed(0.3, 30000); splitRak(); feed(0.3, 30000); rak(); salam(); out.sujoodSplitByFlicker_sit = sum(); done(); }
+  // Fajr: in the first reading the face goes down to the bottom edge with the head turned far to the
+  // side for 2 s (not a bow), and the sujood is split as above: the count must still be right
+  { await start("fajr"); feed(0.3, 2500); feed(0.3, 300, { cy: 0.7, yaw: 0.2 }); feed(0.31, 1700, { cy: 0.86, yaw: 1.2 }); feed(0.3, 25500);
+    const splitRak = () => { raise(); feed(0.36, 2500, { cy: 0.62 }); feed(0.3, 300); raise(); feed(0.3, 600); feed(0.44, 700, { cy: 0.76 }); feed(0.3, 600, { cy: 0.76 }); feed(0.44, 800, { cy: 0.76 }); feed(0.3, 1500); feed(0.38, 2300, { cy: 0.69 }); };
+    splitRak(); feed(0.3, 9000); rak(); salam(); out.fajr21Oct = sum(); done(); }
+
   // ---- the whole body in the picture and no face (phone on the floor): the body tool watches ----
   { let r2 = 3; const r01 = () => { r2 = (r2 * 16807) % 2147483647; return r2 / 2147483647; };
     const wob = (a) => (r01() - 0.5) * 2 * a;
-    const bodyAt = (deg, o = {}) => { const a = ((deg + wob(3)) * Math.PI) / 180; return { up: { x: wob(0.02), y: -Math.cos(a), z: -Math.sin(a) }, raised: !!o.raised, armsUp: false, yaw: (o.yaw ?? 0) + wob(0.04), head: true, hips: true, feet: true, lm: null }; };
+    const bodyAt = (deg, o = {}) => { const a = ((deg + wob(3)) * Math.PI) / 180; return { up: { x: wob(0.02), y: -Math.cos(a), z: -Math.sin(a) }, raised: !!o.raised, armsUp: !!o.armsUp, yaw: (o.yaw ?? 0) + wob(0.04), head: true, hips: true, feet: true, lm: null }; };
     const hold = (deg, ms, o = {}) => { for (let i = 0; i < ms; i += 100) __pc.feed(o.face ?? null, 0, undefined, false, o.face ? { cx: 0.5, cy: 0.2, h: o.face * 1.3 } : null, null, o.lost ? null : bodyAt(deg, o)); };
     const ramp = (a, b, ms) => { for (let i = 0; i < ms; i += 100) __pc.feed(null, 0, undefined, false, null, null, bodyAt(a + ((b - a) * i) / ms)); };
-    const braise = () => { hold(3, 600, { raised: true }); hold(3, 400); };
+    const braise = () => { hold(3, 600, { raised: true, armsUp: true }); hold(3, 400); };
     const brak = () => { braise(); ramp(3, 85, 600); hold(85, 4000); ramp(85, 3, 600); braise(); hold(3, 1500); ramp(3, 140, 1200); hold(140, 4000); ramp(140, 12, 1000); hold(12, 3000); ramp(12, 140, 1000); hold(140, 4000); };
     const bsalam = () => { hold(12, 15000); hold(12, 1500, { yaw: -0.5 }); hold(12, 500); hold(12, 1000, { yaw: 0.5 }); hold(12, 3000); };
     // he bends down to tap the phone on the floor (a big face for a moment), then stands back
     await go("fajr"); hold(60, 1000, { face: 0.3 }); hold(3, 3000); braise(); hold(3, 30000); brak(); ramp(140, 3, 1500); hold(3, 30000); brak(); ramp(140, 12, 1200); bsalam();
-    out.bodyStanding = `${sum()} | eye ${__pc.history()[0].trace.events.includes("watched by the body") ? "body" : "face"}`; done(); }
+    out.bodyStanding = `${sum()} | eye ${__pc.history()[0].trace.events.includes("watched by the body") ? "body" : "face"}`; done();
+    // ...and the takbeer quickly, 2 s after stepping back from the phone (the body not decided yet)
+    await go("fajr"); hold(60, 1000, { face: 0.3 }); hold(3, 2000); braise(); hold(3, 30000); brak(); ramp(140, 3, 1500); hold(3, 30000); brak(); ramp(140, 12, 1200); bsalam();
+    out.bodyStandingQuickTakbeer = `${sum()} | eye ${__pc.history()[0].trace.events.includes("watched by the body") ? "body" : "face"}`; done(); }
 
   localStorage.clear();
   console.log(out);
@@ -153,3 +178,8 @@ window.autoTests = async () => {
 // mixedA_peekInsideNeverGone 13 (missed 1: the clock only starts after the standing ruku);
 // ishaLike 26 (missed 0); bodyStanding 13 (watched by the body).
 // Replays as "auto": v6 Asr missed 1/1/0 (v12 "mixed": 0/1/1), v8 Asr = "sit", v10 Dhuhr 0/1/1 (= v12).
+// v14: tableStandingBodySeen 13 (missed 0, watched by the face; v13: by the body); sujoodSplitByFlicker
+// and _sit 13 (missed 0; v13 missed 1); fajr21Oct 13 (missed 0, the turned-away moment extra; v13
+// missed 1); bodyStanding, bodyStandingQuickTakbeer 13 (watched by the body). Everything else = v13.
+// Replays of the 21 Oct records (real face sizes): Fajr 13 steps, salam, all bows right (the 4 s
+// moment extra); Dhuhr (no face heights: y 0.5) 26 steps, salam, missed 1 (r1 sujood 1).

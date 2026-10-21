@@ -20,9 +20,9 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 13;
+const APP_VERSION = 14;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=33";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=35";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -119,6 +119,8 @@ const AUTO_DEEP = 1.3;       // the face back from standing grows this much over
 const AUTO_FACE_W = 0.1;     // a face at least this wide (share of the picture) = the face tool watches; a
                              // smaller one (or none) with the whole body in the picture = the body tool
 const AUTO_DECIDE_MS = 1000; // ...what it sees must stay the same this long before the start
+const AUTO_FACE_KEEP_MS = 1500; // ...a face big enough seen this recently keeps the face tool (standing at
+                                // the phone the face comes and goes at the top edge)
 const AUTO_NONE_MS = 6000;   // nothing seen at all this long after the camera starts = standing above it
 
 const SIM = new URLSearchParams(location.search).has("sim"); // test mode: no camera, feed values by hand
@@ -212,8 +214,9 @@ const hands = { since: 0, up: false, downSince: 0, rukuSoon: null };
 // decided yet); ref = the direction of the back while standing (3D, from the hips to the
 // shoulders); lean = how far the back is bent from it now (degrees); last = the body last seen.
 const body = { use: null, ref: null, calib: [], calibStart: 0, calibMiss: 0, seen: false, lastSeen: 0, yawAt: 0, lean: 0, peak: 0, leans: [], last: null };
-// Automatic mode before the start: the tool that should watch, by what is seen now (cand), since when.
-const autoEye = { cand: null, since: 0 };
+// Automatic mode before the start: the tool that should watch, by what is seen now (cand), since when;
+// faceAt = when a face big enough for the face tool was last seen.
+const autoEye = { cand: null, since: 0, faceAt: 0 };
 
 function resetTracking() {
   Object.assign(det, {
@@ -228,7 +231,7 @@ function resetTracking() {
   Object.assign(sal, { side: 0, since: 0, first: 0, firstAt: 0, base: 0, yaws: [], yawAt: 0 });
   Object.assign(hands, { since: 0, up: false, downSince: 0, rukuSoon: null });
   Object.assign(body, { use: null, ref: null, calib: [], calibStart: 0, calibMiss: 0, seen: false, lastSeen: 0, yawAt: 0, lean: 0, peak: 0, leans: [], last: null });
-  Object.assign(autoEye, { cand: null, since: 0 });
+  Object.assign(autoEye, { cand: null, since: 0, faceAt: 0 });
   app.waitFrom = 0; app.waitHome = null;
   rec.reset();
 }
@@ -354,14 +357,17 @@ function decideBody(b, w, t) {
 
 // Automatic mode, before the start and in the placement check: which tool watches is decided from
 // what is seen, and may change until the prayer starts (bending down to tap the phone shows a big
-// face for a moment). A face big enough for the face tool = the face; the head and the hips in the
-// picture with a small face or none (phone on the floor, a few metres away) = the body. A change
-// must hold a second. On the lap (or with no body tool) it is always the face.
+// face for a moment). A face big enough for the face tool, seen in the last 3 s = the face. The whole
+// body - head, hips AND feet - with no such face (phone on the floor, a few metres away) = the body:
+// standing at a table the body tool sees the head and the hips too (21 Oct, Dhuhr: it took the body
+// and lost count once he sat), but never the feet. A change must hold a second. On the lap (or with
+// no body tool) it is always the face.
 function autoEyeStep(b, w, t) {
+  if (w != null && w >= AUTO_FACE_W) autoEye.faceAt = t;
   let want = null;
   if (settings.place === "lap" || (!SIM && diag.pose === "off")) want = false;
-  else if (w != null && w >= AUTO_FACE_W) want = false;
-  else if (b && b.head && b.hips) want = true;
+  else if (autoEye.faceAt && t - autoEye.faceAt < AUTO_FACE_KEEP_MS) want = false;
+  else if (b && b.head && b.hips && b.feet) want = true;
   if (want == null) return; // nothing to go by in this frame
   if (want === body.use) { autoEye.cand = null; return; }
   if (body.use != null) {
@@ -474,6 +480,9 @@ function bodyStep(b, t) {
 // the end of the move before it.
 function bowStep(w, t) {
   const down = 1 + (settings.sens - 1) * 0.7; // away: face this many times smaller than the peak
+  // a bow too short to count (a twitch) is forgotten once no bow follows it right away
+  const twitch = obs.bows[obs.bows.length - 1];
+  if (twitch?.short && det.pose === "far" && t - twitch.e >= MIN_RISE_MS) { obs.bows.pop(); rec.event(t, "undo: short bow"); realign(t); }
   const bow = obs.bows[obs.bows.length - 1];
   // just back at the sitting place after standing: a bow counts only once the face has settled there
   const visit = stand.visit;
@@ -570,11 +579,12 @@ function bowStep(w, t) {
         const raisedSince = bow && obs.raises.some((r) => r.t >= bow.e - 200); // a raise proves the rise was real
         if (bow && bow.e != null && !bow.virtual && !bow.ignored && !raisedSince && moveStart - bow.e < MIN_RISE_MS) {
           // the rise before was too short to be real (a flicker): the bow before goes on
-          bow.e = null;
+          bow.e = null; bow.short = false;
           det.peak = Math.max(det.peak, det.lastSize);
           if (det.prevHome) det.home = det.prevHome;
           rec.event(t, "undo: short rise");
         } else {
+          if (bow?.short) { obs.bows.pop(); rec.event(t, "undo: short bow"); } // a twitch, not joined
           det.prevValley = det.valley; det.prevHome = det.home ? { ...det.home } : null;
           det.peak = det.lastSize; det.low = det.pos ? { ...det.pos } : null;
           det.still = null; det.prevUpY = det.upY;
@@ -587,12 +597,14 @@ function bowStep(w, t) {
         const open = obs.bows[obs.bows.length - 1]; // (sitting down removes its bow)
         if (open?.lostSince) { open.lostLowMs += t - open.lostSince; open.lostSince = 0; }
         if (open && open.e == null && !open.virtual && moveStart - open.s < MIN_BOW_MS && open.lostLowMs < 1500) {
-          // too short to be a ruku or sujood: a twitch, forget it
-          obs.bows.pop();
+          // too short to be a ruku or sujood: a twitch - unless the face goes straight back into the bow
+          // (a flicker split one bow into short pieces: the "short rise" above joins them; 21 Oct, Fajr:
+          // a deep sujood at the bottom edge was cut in two and both pieces were thrown away). Forgotten
+          // when no bow follows right away (see the start of bowStep). The matching does not see it.
+          open.e = moveStart; open.short = true;
           det.valley = det.prevValley || det.lastSize;
           if (det.prevHome) det.home = det.prevHome;
           det.score = 0;
-          rec.event(t, "undo: short bow");
         } else {
           det.valley = det.lastSize; if (det.pos) det.home = { ...det.pos };
           det.score = 0; // upright again: start measuring the next bow from zero
@@ -706,7 +718,7 @@ function mayStandUp() {
   if (auto) { if (settings.place === "lap" || body.use) return false; }
   else if (settings.posture !== "mixed" || !stand.used) return false;
   const sit = obs.sits[obs.sits.length - 1];
-  const real = (b) => !b.ignored && !b.virtual;
+  const real = (b) => !b.ignored && !b.virtual && !b.short;
   if (!sit) return stand.used || !obs.bows.some(real);
   const since = obs.bows.filter((b) => real(b) && b.s >= sit.t).length;
   if (auto && det.lastSeen - sit.t <= AUTO_UNDO_MS && since <= 1) return true;
@@ -908,7 +920,7 @@ function realign(t, final = false) {
   const mixed = settings.posture === "mixed" || (auto && !body.use && (stand.used || obs.sits.length > 0));
   const standing = settings.posture === "stand" || (auto && body.use) ? app.n : mixed && !stand.used ? 1 : 0;
   const res = alignPrayer({
-    n: app.n, bows: obs.bows, raises: obs.raises, sits: obs.sits, mixed, standing,
+    n: app.n, bows: obs.bows.filter((b) => !b.short), raises: obs.raises, sits: obs.sits, mixed, standing, // (not a twitch waiting to be joined)
     handsOn: SIM || diag.hands === "ready", t0: app.t0, now: t,
   });
   const tl = timeline({ steps: app.steps, pairs: res.pairs, bows: res.bows, raises: obs.raises, t0: app.t0, now: t, armMs: HANDS_ARM_MS });
@@ -936,7 +948,7 @@ function matchText() {
   if (!res) return "";
   const names = ["ruku", "sujood1", "sujood2"];
   const label = new Map(res.pairs.map((p) => [res.bows[p.a], `r${Math.floor(p.j / 3) + 1}-${names[p.j % 3]}`]));
-  return obs.bows.map((b) => `${rec.rel(b.s)}-${b.e == null ? "" : rec.rel(b.e)}:${b.ignored ? "removed" : label.get(b) || "extra"}${b.virtual ? "(added)" : ""}`).join(" ")
+  return obs.bows.filter((b) => !b.short).map((b) => `${rec.rel(b.s)}-${b.e == null ? "" : rec.rel(b.e)}:${b.ignored ? "removed" : label.get(b) || "extra"}${b.virtual ? "(added)" : ""}`).join(" ")
     + (obs.sits.length ? ` | sat down ${obs.sits.map((x) => rec.rel(x.t)).join(",")}` : "")
     + ` | missed ${res.misses}, extra ${res.extras}, cost ${res.cost.toFixed(1)}`;
 }
@@ -959,7 +971,7 @@ const rec = {
     this.lastAt = t;
     const seen = det.seen && det.valley;
     const size = seen ? Math.round((det.lastSize / det.valley) * 100) : -1;
-    const cy = seen && det.pos ? Math.round(det.pos.cy * 100) : -1;
+    const cy = det.seen && det.pos ? Math.round(det.pos.cy * 100) : -1; // (also when the body watches)
     const shs = sh.seen && sh.home ? Math.round(sh.score * 100) : -1;
     const hc = handDetector && wantHands() ? lastHandCount : -1;
     const bl = body.use && body.seen ? Math.round(body.lean) : -1;
@@ -1039,7 +1051,7 @@ function takbeerStep(up, t, w) {
   // face (not on the lap). Automatic: only from what is seen - the face left through the top, or was
   // last seen in the upper half and stays gone, or nothing at all was seen since the camera started.
   // (Not while the body tool sees the whole person: then the phone sees him, he is not above it.)
-  const wholeBody = (body.seen && body.last?.head && body.last?.hips) || autoEye.cand === true;
+  const wholeBody = (body.seen && body.last?.head && body.last?.hips && body.last?.feet) || autoEye.cand === true;
   const auto = isAuto() && settings.place !== "lap" && !body.use && !wholeBody;
   if ((mixed || auto) && w == null && det.lastSeen) {
     const gone = t - det.lastSeen;
@@ -1071,7 +1083,7 @@ function addMissedBow(t) {
 function removeLastBow(t) {
   for (let i = obs.bows.length - 1; i >= 0; i--) {
     const b = obs.bows[i];
-    if (b.ignored) continue;
+    if (b.ignored || b.short) continue;
     if (b.virtual) obs.bows.splice(i, 1); else b.ignored = true;
     rec.event(t, "button: extra move");
     break;
@@ -1734,6 +1746,9 @@ function startPrayer(t, away = false) {
   det.pose = "far"; det.cand = null;
   sh.home = null;
   if (isAuto()) {
+    // the body about to take over (the whole body seen, no face) when the takbeer came: it does now
+    // (its upright back is then learned from the first moments of the prayer)
+    if (autoEye.cand === true && !body.use) { body.use = true; sal.yaws = []; body.calib = []; body.ref = null; }
     if (body.use == null) body.use = false; // nothing decided it: the face watches
     det.seat = null; // the sitting place is learned when sitting down is seen
     det.upSince = 0;

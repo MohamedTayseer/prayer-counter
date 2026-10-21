@@ -4,6 +4,22 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v14 — two fixes from the 21 Oct records
+- Dhuhr, first rak'ah standing: the app chose the body tool (meant for a phone
+  on the floor), because standing at the table it saw the head and the hips.
+  Sitting on the chair, the body tool cannot tell sitting upright from sujood
+  (the back already reads 25-40° bent), so from rak'ah 2 the bows ran together.
+  Now the body tool is chosen only when it sees the whole body, feet included,
+  and no face big enough for the face tool in the last 1.5 s. At a table the
+  feet are never in the picture.
+- Fajr, sitting: a deep sujood at the bottom edge of the picture was cut in two
+  by a flicker, and both pieces (under 1 s each) were thrown away as twitches.
+  Now a piece under 1 s that goes straight on (within 0.8 s) into more of the
+  bow is joined to it; only a short bow on its own is thrown away. This is in
+  the sitting and "first rak'ah standing" modes too.
+- The record keeps the face's height in the picture also while the body tool
+  watches.
+
 ## v13 — automatic: no way of praying to choose, nothing learned before the prayer
 - Found from a real record (Isha, 19 Oct, first rak'ah standing): nothing was
   counted. The camera saw the whole prayer (the 12 bows show clearly, in 4

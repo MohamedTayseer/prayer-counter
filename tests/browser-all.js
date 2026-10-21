@@ -18,8 +18,8 @@ window.runAll = async (opts = {}) => {
   }
   // the real records (kept on the PC only): each replayed with three guesses of the face size
   await run("browser-replay.js");
-  const records = opts.records || ["v6-asr-2026-10-16", "v8-asr-2026-10-17", "v10-dhuhr-mixed-2026-10-19", "v12-isha-mixed-2026-10-19"];
-  const guesses = [[0.06, 1.0], [0.075, 1.33], [0.09, 1.47]];
+  const records = opts.records || ["v6-asr-2026-10-16", "v8-asr-2026-10-17", "v10-dhuhr-mixed-2026-10-19", "v12-isha-mixed-2026-10-19",
+    "v13-dhuhr-auto-2026-10-21", "v13-fajr-auto-2026-10-21"];
   out.replays = {};
   for (const name of records) {
     let rec;
@@ -31,7 +31,9 @@ window.runAll = async (opts = {}) => {
     const samples = rec.split("\n").find((l) => l.startsWith("SAMPLES ")).split(" ").slice(2).join(" ");
     const events = rec.split("\n").find((l) => l.startsWith("EVENTS ")).slice(7).split("; ");
     const raises = events.filter((e) => /^\d+:(raise|fix: .*raise)/.test(e)).map((e) => Number(e.split(":")[0]) * 100);
-    for (const p of [posture, ...(opts.postures || [])]) {
+    // (from v13 the records keep the real face width: only the face's height over width is guessed)
+    const guesses = Number(head.split(" ")[1].slice(1)) >= 13 ? [[0, 0.7], [0, 0.85], [0, 1.0]] : [[0.06, 1.0], [0.075, 1.33], [0.09, 1.47]];
+    for (const p of [...new Set([posture, ...(opts.postures || [])])]) {
       for (const [v0, hk] of guesses) {
         const r = await window.replayRecord(samples, v0, hk, raises, prayer, p);
         out.replays[`${name} ${p} ${v0}/${hk}`] = `${r.ended} steps=${r.steps} | ${r.match}`;
