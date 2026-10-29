@@ -19,7 +19,7 @@ window.runAll = async (opts = {}) => {
   // the real records (kept on the PC only): each replayed with three guesses of the face size
   await run("browser-replay.js");
   const records = opts.records || ["v6-asr-2026-10-16", "v8-asr-2026-10-17", "v10-dhuhr-mixed-2026-10-19", "v12-isha-mixed-2026-10-19",
-    "v13-dhuhr-auto-2026-10-21", "v13-fajr-auto-2026-10-21"];
+    "v13-dhuhr-auto-2026-10-21", "v13-fajr-auto-2026-10-21", "v14-dhuhr-auto-2026-10-28"];
   out.replays = {};
   for (const name of records) {
     let rec;

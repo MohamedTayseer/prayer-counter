@@ -4,6 +4,26 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v15 — small bows and the start button (28 Oct, Dhuhr)
+- Found from a real record (Dhuhr, sitting): the bows were small this time (the
+  face grew only 10-30% and moved down a little), so sitting up between the
+  sujoods and rising from the ruku were not seen and the bows ran together; the
+  prayer could not be followed. The same record gives the same result in v7:
+  it was not something a newer version broke.
+- A bow is now also over when the face is back to about its upright size and
+  place (not only when it is much smaller than at its deepest).
+- A face lost while bowed counts as going up out of the picture only if it was
+  moving up when it was lost; going down or staying down it is a sujood.
+- The sensitivity with the phone in front is now 1.25 (it was 1.35). Played back
+  through v15, all the real records come out as well or better than before, and
+  that Dhuhr comes out right from the takbeer to the salam.
+- Started with the button (the hand tool was still loading): the face at that
+  moment is reaching for the phone, so the upright face is learned once it has
+  rested a moment; no bow counts before that.
+- A short twitch is no longer thrown away just before the bow it belongs to
+  goes on.
+- The record keeps the face's height in the picture too.
+
 ## v14 — two fixes from the 21 Oct records
 - Dhuhr, first rak'ah standing: the app chose the body tool (meant for a phone
   on the floor), because standing at the table it saw the head and the hips.

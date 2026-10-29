@@ -20,9 +20,9 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 14;
+const APP_VERSION = 15;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=35";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=41";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -40,7 +40,7 @@ const PRAYERS = {
 };
 const ORD = ["", "الأولى", "الثانية", "الثالثة", "الرابعة"];
 const HIST_KEY = "prayerCounter.history";
-const SENS_KEY = "prayerCounter.sens";       // + ".front" / ".lap"
+const SENS_KEY = "prayerCounter.sens2";      // + ".front" / ".lap" (v15: a new key, for the new default in front)
 const PLACE_KEY = "prayerCounter.place";
 const DIAG_KEY = "prayerCounter.diag";
 const POSTURE_KEY = "prayerCounter.posture2"; // v13: a new key, so everyone starts on "تلقائي"
@@ -59,9 +59,10 @@ const POSTURES = {
 };
 
 // Where the phone is. Each place keeps its own sensitivity: on the lap the face is closer,
-// so leaning in makes it grow faster.
+// so leaning in makes it grow faster. In front 1.25 since v15 (28 Oct: his bows grew the face only
+// 10-30%; at 1.35 the sitting between the sujoods was missed and the bows ran together).
 const PLACES = {
-  front: { name: "قدامي", sens: 1.35, hint: "حط الموبايل قدامك على ترابيزة أو على الأرض، في مستوى وشك." },
+  front: { name: "قدامي", sens: 1.25, hint: "حط الموبايل قدامك على ترابيزة أو على الأرض، في مستوى وشك." },
   lap: { name: "على رجلي", sens: 1.6, hint: "حط الموبايل على رجلك والشاشة لفوق ناحية وشك." },
 };
 
@@ -178,6 +179,7 @@ const app = {
 // lowest place while bowed. Each move is measured from the end of the move before it.
 const DOWN_FACES = 1.0;     // moving down by one face height counts as a full lean
 const RISE_FACES = 0.6;     // moving back up by this many face heights counts as rising
+const FAR_SCORE = 0.35;     // ...and back this close to the upright size and place (lean score) too
 const det = {
   ema: 0, pose: "far", cand: null, candSince: 0, valley: 0, peak: 0,
   pos: null, home: null, low: null, score: 0,
@@ -193,6 +195,9 @@ const det = {
   farBy: "face",                  // what showed it ending
   refresh: false,                 // learn the upright face afresh when it shows again
   upSince: 0,                     // "first rak'ah standing": the face at the top of the picture since
+  cyHist: [],                     // [t, cy] of the face over its last 0.8 s in sight (was it going up?)
+  relearn: 0,                     // automatic, started by the button: learn the upright face once it rests
+  relearnStill: null,             // ...where it is resting, and since when
 };
 // What the camera saw during the prayer: the bows and the hand raises. The steps on the screen are
 // worked out from these by matching them against the shape of the prayer (align.js).
@@ -223,7 +228,7 @@ function resetTracking() {
     ema: 0, pose: "far", cand: null, candSince: 0, valley: 0, peak: 0, pos: null, home: null, low: null, score: 0,
     lastSeen: 0, lastSize: 0, lastYaw: 0, yawHist: [], seen: false, calib: [], calibStart: 0,
     prevValley: 0, prevHome: null, still: null, upY: null, prevUpY: null, seat: null, raw: null,
-    nearBy: "face", farAt: 0, farBy: "face", refresh: false, upSince: 0,
+    nearBy: "face", farAt: 0, farBy: "face", refresh: false, upSince: 0, cyHist: [], relearn: 0, relearnStill: null,
   });
   obs.bows = []; obs.raises = []; obs.sits = [];
   Object.assign(stand, { on: false, used: false, visit: null, ruku: null, still: null });
@@ -282,6 +287,8 @@ function onObservation(w, yaw, t, handsUp = false, pos = null, shoulders = null,
     const fresh = app.mode === "pray" && (stand.on || det.refresh);
     det.lastSeen = t;
     det.raw = { ...p };
+    det.cyHist.push([t, p.cy]);
+    while (det.cyHist.length && t - det.cyHist[0][0] > 800) det.cyHist.shift();
     det.ema = det.ema && !fresh ? det.ema * 0.5 + w * 0.5 : w;
     det.pos = det.pos && !fresh ? { cx: det.pos.cx * 0.5 + p.cx * 0.5, cy: det.pos.cy * 0.5 + p.cy * 0.5, h: det.pos.h * 0.5 + p.h * 0.5 } : { ...p };
   }
@@ -482,7 +489,9 @@ function bowStep(w, t) {
   const down = 1 + (settings.sens - 1) * 0.7; // away: face this many times smaller than the peak
   // a bow too short to count (a twitch) is forgotten once no bow follows it right away
   const twitch = obs.bows[obs.bows.length - 1];
-  if (twitch?.short && det.pose === "far" && t - twitch.e >= MIN_RISE_MS) { obs.bows.pop(); rec.event(t, "undo: short bow"); realign(t); }
+  // (not while a new bow is already starting in time to be joined to it)
+  const joining = det.cand === "near" && twitch && det.candSince - twitch.e < MIN_RISE_MS;
+  if (twitch?.short && det.pose === "far" && t - twitch.e >= MIN_RISE_MS && !joining) { obs.bows.pop(); rec.event(t, "undo: short bow"); realign(t); }
   const bow = obs.bows[obs.bows.length - 1];
   // just back at the sitting place after standing: a bow counts only once the face has settled there
   const visit = stand.visit;
@@ -523,7 +532,8 @@ function bowStep(w, t) {
         else if (t - det.upSince >= AWAY_MS) return goAway(t);
       }
       if (visit && visitRest(visit, size, t)) return; // not sitting after all: standing again
-      if (!visit || visit.seatAt > 0 || deep(size)) {
+      if (det.relearn) relearnStep(size, t);
+      if (!det.relearn && (!visit || visit.seatAt > 0 || deep(size))) {
         if (det.score >= need) { want = "near"; det.nearBy = "face"; }
         else if (shOn && sh.score >= need) { want = "near"; det.nearBy = "shoulders"; }
       }
@@ -531,7 +541,10 @@ function bowStep(w, t) {
       det.peak = Math.max(det.peak, size);
       if (!det.low || det.pos.cy > det.low.cy) det.low = { ...det.pos };
       const back = (det.low.cy - det.pos.cy) / det.low.h; // moved back up, in face heights
-      if (size <= det.peak / down || (back >= RISE_FACES && size <= det.peak * 1.02)) { want = "far"; det.farBy = "face"; }
+      // over: much smaller than at its deepest, or well back up - or back to about its upright size and
+      // place (28 Oct: small bows; sitting up between the sujoods was neither, and the bows ran together;
+      // not for a bow only the shoulders showed: the face never left its upright place in it)
+      if (size <= det.peak / down || (back >= RISE_FACES && size <= det.peak * 1.02) || (!bow?.byShoulders && leanScore(size) < FAR_SCORE)) { want = "far"; det.farBy = "face"; }
       // the shoulders are back up and the face shows no lean either (a bow the face hardly showed)
       else if (leanScore(size) < 0.6 && ((shOn && shShowed && sh.score <= SH_FAR) || (bow?.byShoulders && !sh.seen))) { want = "far"; det.farBy = "shoulders"; }
       if (bow?.lostSince) { bow.lostLowMs += t - bow.lostSince; bow.lostSince = 0; }
@@ -546,7 +559,7 @@ function bowStep(w, t) {
       if (gone >= AWAY_MS && leftAbove()) return goAway(t);
       if (gone >= AWAY_ANY_MS && visit && s && p && p.cy < s.cy - 0.5 * s.h) return goAway(t);
     }
-    if (t - det.lastSeen > LOST_AS_NEAR_MS && canBow) {
+    if (t - det.lastSeen > LOST_AS_NEAR_MS && canBow && !det.relearn) {
       // face left the picture while coming close or going down (head bent in sujood). When the
       // shoulders ended the last bow while the face was still hidden, its last place is from inside
       // that bow: only once the face has been seen again.
@@ -559,8 +572,12 @@ function bowStep(w, t) {
     // Face gone while bowed. If it was back at its upright height (or at the top edge) it left
     // through the top of the picture: the person stood up. Otherwise it went down (sujood).
     // Shoulders that showed the bow and are back up say it is over even when the face is still hidden.
+    // (Back at its upright height only counts if it was going up when it was lost: a face lost while
+    // going down or staying down is in sujood, even close to its upright height - 28 Oct, Dhuhr: small
+    // bows, a sujood was cut short that way.)
     const p = det.pos, home = det.home;
-    const backUp = p && ((home && p.cy <= home.cy + 0.5 * home.h) || p.cy - p.h / 2 < 0.05);
+    const rising = det.cyHist.length && p && (det.cyHist[0][1] - det.raw.cy) / (p.h || 0.1) >= 0.25;
+    const backUp = p && ((home && p.cy <= home.cy + 0.5 * home.h && rising) || p.cy - p.h / 2 < 0.05);
     if (shOn && shShowed && sh.score <= SH_FAR) { want = "far"; det.farBy = "shoulders"; }
     else if (backUp) {
       if (t - det.lastSeen > LOST_AS_NEAR_MS) { want = "far"; det.farBy = "face"; }
@@ -621,6 +638,19 @@ function bowStep(w, t) {
       realign(t);
     }
   } else det.cand = null;
+}
+
+// Automatic, started with the button: the upright face is the one that rests 1 s (size within 10%,
+// place within a third of a face), or whatever it is 6 s after the start.
+function relearnStep(size, t) {
+  const st = det.relearnStill;
+  if (!st || Math.abs(size - st.size) > 0.1 * st.size || Math.abs(det.pos.cy - st.cy) > 0.33 * det.pos.h) det.relearnStill = { size, cy: det.pos.cy, t };
+  else if (t - st.t < 1000 && t - det.relearn < 6000) return;
+  else {
+    det.valley = size; det.home = { ...det.pos }; det.upY = det.pos.cy; det.score = 0;
+    det.relearn = 0; det.relearnStill = null;
+    rec.event(t, "upright learned");
+  }
 }
 
 // ---------- "first rak'ah standing" with the phone set for sitting ----------
@@ -960,7 +990,8 @@ function matchText() {
 // the hand tool is not running. Standing prayer by the body: the back's bend (degrees, -1 = no
 // body) and arms raised (1/0); the head turn is then the body's. From v13: the face's real width
 // (per mille of the picture width, -1 = no face) and standing (0 = no, 1 = standing out of the
-// picture, 2 = the face back and not yet known to be sitting).
+// picture, 2 = the face back and not yet known to be sitting). From v15: the face's height (per mille
+// of the picture height).
 const rec = {
   t0: 0, lastAt: 0, samples: [], events: [],
   reset() { this.t0 = 0; this.lastAt = 0; this.samples = []; this.events = []; },
@@ -978,7 +1009,8 @@ const rec = {
     const arms = body.seen && (body.use ? body.last?.raised : body.last?.armsUp) ? 1 : 0;
     const fw = det.seen ? Math.round(det.ema * 1000) : -1;
     const st = stand.on ? 1 : stand.visit ? 2 : 0;
-    this.samples.push(`${this.rel(t)}:${size},${Math.round(det.score * 100)},${cy},${Math.round(det.lastYaw * 100)},${det.pose === "near" ? 1 : 0},${shs},${hc},${bl},${arms},${fw},${st}`);
+    const fh = det.seen && det.raw ? Math.round(det.raw.h * 1000) : -1;
+    this.samples.push(`${this.rel(t)}:${size},${Math.round(det.score * 100)},${cy},${Math.round(det.lastYaw * 100)},${det.pose === "near" ? 1 : 0},${shs},${hc},${bl},${arms},${fw},${st},${fh}`);
   },
   event(t, what) { if (this.t0) this.events.push(`${this.rel(t)}:${what}`); },
 };
@@ -1726,7 +1758,8 @@ async function startPlacementCheck() {
 }
 
 // away = started by standing up ("first rak'ah standing"): the face is above the picture now.
-function startPrayer(t, away = false) {
+// byButton = started with the button, not by a takbeer seen.
+function startPrayer(t, away = false, byButton = false) {
   if (app.mode !== "calib" && app.mode !== "takbeer") return;
   $("startNow").hidden = true;
   const p = PRAYERS[app.key];
@@ -1752,8 +1785,11 @@ function startPrayer(t, away = false) {
     if (body.use == null) body.use = false; // nothing decided it: the face watches
     det.seat = null; // the sitting place is learned when sitting down is seen
     det.upSince = 0;
-    // the face as it is at the takbeer is upright: bows are measured from it (nothing learned before)
+    // the face as it is at the takbeer is upright: bows are measured from it (nothing learned before).
+    // Started with the button, the face was reaching for the phone: the upright face is learned once
+    // it has rested a moment (see bowStep; 28 Oct: a reference taken at the press spoiled rak'ah 1).
     if (!away && !body.use && det.seen && det.ema) { det.valley = det.ema; det.lastSize = det.ema; det.home = { ...det.pos }; det.upY = det.pos.cy; det.score = 0; }
+    if (byButton && !away && !body.use) { det.relearn = t; det.relearnStill = null; }
   }
   rec.start(t);
   rec.event(t, `start ${app.key} ${settings.posture}/${settings.place} sens ${settings.sens} hands ${diag.hands} body ${diag.pose}${body.use ? " (watched by the body)" : ""}`);
@@ -1803,7 +1839,8 @@ function traceText(r) {
   const match = r.trace.match ? `\nMATCH ${r.trace.match}` : "";
   const v = r.v ?? 0;
   const fields = ["t:size,score,y,turn,bowed", "t:size,score,y,turn,bowed,shoulders", "t:size,score,y,turn,bowed,shoulders,hands",
-    "t:size,score,y,turn,bowed,shoulders,hands,body,arms", "t:size,score,y,turn,bowed,shoulders,hands,body,arms,face,standing"][v >= 13 ? 4 : Math.max(0, Math.min(3, v - 7))];
+    "t:size,score,y,turn,bowed,shoulders,hands,body,arms", "t:size,score,y,turn,bowed,shoulders,hands,body,arms,face,standing",
+    "t:size,score,y,turn,bowed,shoulders,hands,body,arms,face,standing,faceh"][v >= 15 ? 5 : v >= 13 ? 4 : Math.max(0, Math.min(3, v - 7))];
   return `${head}\nSTEPS ${steps}\nEVENTS ${r.trace.events}${match}\nSAMPLES ${fields} ${r.trace.samples}`;
 }
 
@@ -1988,7 +2025,7 @@ $("placeButtons").addEventListener("click", (e) => {
   loadSens();
   showPlace();
 });
-$("startNow").addEventListener("click", () => startPrayer(now()));
+$("startNow").addEventListener("click", () => startPrayer(now(), false, true));
 function showAlert() {
   for (const b of document.querySelectorAll(".alert-opt")) b.setAttribute("aria-pressed", String(b.dataset.alert === settings.alert));
 }
