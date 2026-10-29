@@ -4,6 +4,22 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v17 — rising from ruku quickly (30 Oct: Dhuhr, Maghrib, Fajr)
+- Found from three real records sent with the new button: rising from the ruku
+  quickly, the head still a little forward, the face came back to its upright
+  height and the shoulders came back up, but the face stayed 10-17% bigger than
+  upright. The app took the ruku and the first sujood for one bow, so its steps
+  fell one behind: it said "the sitting between the sujoods" at the tashahhud,
+  gave no tashahhud cue, and in the Fajr it missed the salam.
+- A bow is now also over when the face is back at about its upright height and
+  the shoulders are back up, even while the face still looks a little bigger.
+- The raise made while rising from the ruku now counts at that moment too (it
+  was thrown away because the face still looked bowed).
+- "ابعت التسجيل" no longer saves a second little file with only the record's
+  name in it.
+- Played back through v17, the three prayers come out right; all the older
+  records and tests come out as before.
+
 ## v16 — the prayers left today, and sending the record
 - At the very bottom of the screen shown after a prayer (under its steps, so the
   rest of the screen stays as it was): today's prayers that are not recorded

@@ -162,6 +162,27 @@ window.autoTests = async () => {
     await go("fajr"); hold(60, 1000, { face: 0.3 }); hold(3, 2000); braise(); hold(3, 30000); brak(); ramp(140, 3, 1500); hold(3, 30000); brak(); ramp(140, 12, 1200); bsalam();
     out.bodyStandingQuickTakbeer = `${sum()} | eye ${__pc.history()[0].trace.events.includes("watched by the body") ? "body" : "face"}`; done(); }
 
+  // ---- v17 (30 Oct records): rising from ruku quickly with the head still a little forward - the face
+  // back at its upright height and the shoulders back up, but the face still 18% bigger than upright -
+  // and the raise of rising from ruku seen for 0.4 s, or not at all. The ruku and the first sujood must
+  // stay two bows (v16 ran them together: the steps fell one behind, the last tashahhud and the salam
+  // were missed). Real face sizes (a face 0.2 wide, 0.145 high), no wobble, so the margins are exact. ----
+  { const fn = (w, ms, o = {}) => { for (let i = 0; i < ms; i += 100) __pc.feed(w, o.yaw ?? 0, undefined, o.hands ?? false, w == null ? null : { cx: 0.5, cy: o.cy ?? 0.42, h: o.h ?? 0.145 }, o.sh ?? up); };
+    const R = { cy: 0.51, h: 0.185, sh: ruku }, S = { cy: 0.56, h: 0.2, sh: suj }, D = { cy: 0.43, h: 0.165 };
+    const quickRak = (hands) => {
+      fn(0.2, 500, { hands: true }); fn(0.2, 400); // the takbeer before ruku
+      fn(0.266, 2200, R); // ruku
+      fn(0.236, 400, D); fn(0.236, 400, { ...D, hands }); fn(0.236, 400, D); // up again for 1.2 s, the face still big
+      fn(0.28, 2200, S); fn(0.2, 1800); fn(0.28, 2200, S); // sujood, sitting between, sujood
+    };
+    for (const hands of [true, false]) {
+      await go("fajr"); fn(0.2, 3500); fn(0.2, 1500, { hands: true }); fn(0.2, 10000);
+      quickRak(hands); fn(0.2, 10000); quickRak(hands);
+      fn(0.2, 12000); fn(0.2, 1000, { yaw: 0.5 }); fn(0.2, 600); fn(0.2, 1000, { yaw: -0.5 }); // last tashahhud, salam
+      out[hands ? "quickRiseFaceBig" : "quickRiseFaceBigNoHands"] = sum(); done();
+    }
+  }
+
   localStorage.clear();
   console.log(out);
   return out;
@@ -183,3 +204,9 @@ window.autoTests = async () => {
 // missed 1); bodyStanding, bodyStandingQuickTakbeer 13 (watched by the body). Everything else = v13.
 // Replays of the 21 Oct records (real face sizes): Fajr 13 steps, salam, all bows right (the 4 s
 // moment extra); Dhuhr (no face heights: y 0.5) 26 steps, salam, missed 1 (r1 sujood 1).
+// v17: quickRiseFaceBig, quickRiseFaceBigNoHands 13 (missed 0, salam; v16: NOT ENDED on "الرفع من الركوع 2",
+// the ruku and the first sujood run together in both rak'ahs). Everything else = v16.
+// Replays of the 30 Oct records (with the shoulders and every "hands up ... = raise" fed): Asr 26 steps,
+// all 12 bows right + 1 extra (v16: the ruku and sujood 1 of rak'ah 2 as one); Maghrib 20 steps, salam,
+// 3 extra after rak'ah 3; Fajr 13 steps, salam (with only the counted raises, v16: not ended, the second
+// sujood of rak'ah 2 missing - as on the phone).

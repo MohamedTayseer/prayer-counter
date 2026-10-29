@@ -5,7 +5,10 @@
 // The record keeps face size relative to the upright size (reset when each bow ends), so real
 // sizes are rebuilt from a guessed starting size V0; the face height is guessed as w * hk.
 // Try a few guesses (e.g. V0/hk = 0.06/1.0, 0.075/1.33, 0.09/1.47). raises = hand-raise times
-// (ms after the start) taken from the record's EVENTS.
+// (ms after the start) taken from the record's EVENTS: a number = hands up for 600 ms from then,
+// [from, to] = hands up all that time (a "hands up ... = raise" line of the record, counted or not).
+// The shoulders' lean (6th field) is fed too (opts.shoulders === false: not), as shoulders that are
+// that far down from where the app has them upright, so the app works out the same lean.
 // opts.yawNoise: add this much random wobble to the head turn on every frame (the record keeps only
 // 4 values a second; the real values between them wobble), opts.seed: start of the random numbers.
 // Records from v13 on keep the face's real width (10th field): then that is used and V0 is not
@@ -14,16 +17,21 @@
 window.replayRecord = async (S, V0, hk, raises, prayer, posture, opts = {}) => {
   localStorage.clear();
   let rnd = opts.seed || 7; const wobble = () => { rnd = (rnd * 16807) % 2147483647; return ((rnd / 2147483647) - 0.5) * 2 * (opts.yawNoise || 0); };
-  const samples = S.trim().split(" ").map((x) => { const [t, rest] = x.split(":"); const v = rest.split(",").map(Number); return { t: Number(t) * 100, size: v[0], y: v[2], turn: v[3], bowed: v[4], arms: v[8] === 1, face: v.length >= 10 ? v[9] : null, fh: v.length >= 12 ? v[11] : null }; });
+  const samples = S.trim().split(" ").map((x) => { const [t, rest] = x.split(":"); const v = rest.split(",").map(Number); return { t: Number(t) * 100, size: v[0], y: v[2], turn: v[3], bowed: v[4], sh: v.length >= 6 ? v[5] : -1, arms: v[8] === 1, face: v.length >= 10 ? v[9] : null, fh: v.length >= 12 ? v[11] : null }; });
   const abs = samples.some((s) => s.face != null && s.face >= 0);
   let V = V0, lastSeenBowed = null; const frames = [];
   samples.forEach((s, i) => {
-    if (abs) { const w = s.face >= 0 ? s.face / 1000 : null; frames.push({ t: s.t, w, cy: s.y >= 0 ? s.y / 100 : 0.5, yaw: s.turn / 100, arms: s.arms, h: s.fh > 0 ? s.fh / 1000 : null }); return; }
+    if (abs) { const w = s.face >= 0 ? s.face / 1000 : null; frames.push({ t: s.t, w, cy: s.y >= 0 ? s.y / 100 : 0.5, yaw: s.turn / 100, arms: s.arms, h: s.fh > 0 ? s.fh / 1000 : null, sh: s.sh }); return; }
     if (s.bowed === 0 && i > 0 && samples[i - 1].bowed === 1 && lastSeenBowed) V = lastSeenBowed;
     const w = s.size < 0 ? null : V * s.size / 100;
     if (s.bowed === 1 && w) lastSeenBowed = w;
-    frames.push({ t: s.t, w, cy: s.y / 100, yaw: s.turn / 100 });
+    frames.push({ t: s.t, w, cy: s.y / 100, yaw: s.turn / 100, sh: s.sh });
   });
+  const shouldersFor = (f) => { // (SH_DOWN = 0.5 in app.js)
+    if (opts.shoulders === false || !(f.sh >= 0)) return null;
+    const home = __pc.sh().home, sw = home?.sw ?? 0.3;
+    return { sy: (home?.sy ?? 0.7) + (f.sh / 100) * 0.5 * sw, sw };
+  };
   if (abs) V0 = frames.find((f) => f.w)?.w ?? V0;
   const spoken = []; let curT = 0;
   speechSynthesis.speak = (u) => { if (u.text.trim()) spoken.push(`${u.text} @${(curT / 1000).toFixed(1)}s`); };
@@ -42,8 +50,8 @@ window.replayRecord = async (S, V0, hk, raises, prayer, posture, opts = {}) => {
     const f = frames[i], next = frames[i + 1] ? frames[i + 1].t : f.t + 300;
     for (let t = f.t; t < next; t += 100) {
       curT = t;
-      const hands = raises.some((r) => t >= r && t < r + 600) || !!f.arms; // (v13 records: the arms seen up)
-      __pc.feed(f.w, f.yaw + wobble(), t0 + t, hands, f.w == null ? null : { cx: 0.5, cy: f.cy, h: f.h ?? f.w * hk }); // (v15 records keep the real height)
+      const hands = raises.some((r) => (Array.isArray(r) ? t >= r[0] && t <= r[1] : t >= r && t < r + 600)) || !!f.arms; // (v13 records: the arms seen up)
+      __pc.feed(f.w, f.yaw + wobble(), t0 + t, hands, f.w == null ? null : { cx: 0.5, cy: f.cy, h: f.h ?? f.w * hk }, shouldersFor(f)); // (v15 records keep the real height)
       const st = __pc.state();
       const label = st.mode === "pray" ? `${st.step} ${st.group}` : st.mode;
       if (label !== lastLabel) { shown.push(`${(t / 1000).toFixed(1)} ${label}`); lastLabel = label; }

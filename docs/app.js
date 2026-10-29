@@ -20,9 +20,9 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 16;
+const APP_VERSION = 17;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=42";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=43";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -180,6 +180,8 @@ const app = {
 const DOWN_FACES = 1.0;     // moving down by one face height counts as a full lean
 const RISE_FACES = 0.6;     // moving back up by this many face heights counts as rising
 const FAR_SCORE = 0.35;     // ...and back this close to the upright size and place (lean score) too
+const BACK_UP_FACES = 0.3;  // sitting back up: the face this close to its upright height (face heights),
+const BACK_UP_SIZE = 0.92;  // ...this much smaller than at the deepest of the bow, the shoulders back up
 const det = {
   ema: 0, pose: "far", cand: null, candSince: 0, valley: 0, peak: 0,
   pos: null, home: null, low: null, score: 0,
@@ -251,6 +253,17 @@ function leanScore(size) {
     s += Math.max(0, dy) / DOWN_FACES + (0.5 * dx) / DOWN_FACES;
   }
   return s;
+}
+
+// Sat back up in the middle of this bow, seen by the height of the face and by the shoulders: the face
+// is back at about its upright height and the shoulders, which went down into this bow, are back up -
+// even while the face still looks bigger than upright (30 Oct, three prayers: rising from ruku quickly,
+// the head still a little forward, the face stayed 10-17% bigger; the ruku and the first sujood ran
+// together, the steps fell one behind and the tashahhud and the salam were missed).
+function backUpright(bow) {
+  const p = det.pos, home = det.home;
+  if (!p || !home || !bow || bow.e != null || !sh.seen || !sh.home) return false;
+  return (bow.shPeak || 0) >= 1 && sh.score <= SH_FAR && p.cy <= home.cy + BACK_UP_FACES * home.h && det.lastSize <= det.peak * BACK_UP_SIZE;
 }
 
 // How far into a bow the shoulders are: in ruku and sujood they come down and closer (wider).
@@ -547,6 +560,8 @@ function bowStep(w, t) {
       if (size <= det.peak / down || (back >= RISE_FACES && size <= det.peak * 1.02) || (!bow?.byShoulders && leanScore(size) < FAR_SCORE)) { want = "far"; det.farBy = "face"; }
       // the shoulders are back up and the face shows no lean either (a bow the face hardly showed)
       else if (leanScore(size) < 0.6 && ((shOn && shShowed && sh.score <= SH_FAR) || (bow?.byShoulders && !sh.seen))) { want = "far"; det.farBy = "shoulders"; }
+      // the face back at its upright height and the shoulders back up, the face still a bit bigger
+      else if (backUpright(bow)) { want = "far"; det.farBy = "back"; }
       if (bow?.lostSince) { bow.lostLowMs += t - bow.lostSince; bow.lostSince = 0; }
       if (want === "near" && satDown(size, t)) want = "far";
     }
@@ -632,7 +647,7 @@ function bowStep(w, t) {
           det.refresh = !det.seen && det.farBy === "shoulders";
           if (sh.seen) sh.home = { sy: sh.sy, sw: sh.sw };
           if (open && open.e == null) open.e = moveStart;
-          rec.event(t, det.farBy === "shoulders" ? "far (shoulders)" : "far");
+          rec.event(t, det.farBy === "shoulders" ? "far (shoulders)" : det.farBy === "back" ? "far (back up)" : "far");
         }
       }
       realign(t);
@@ -898,7 +913,8 @@ function uprightNow() {
   if (body.use) return body.seen && body.ref != null && body.lean < BODY_UPRIGHT;
   if (!det.seen || !det.valley) return false;
   if (det.pose === "far") return det.score < 1;
-  return det.lastSize <= (det.prevValley || det.valley) * (1 + (settings.sens - 1) * 0.6);
+  // (or sat back up in the middle of the bow: the raise of rising from ruku, the face still bigger)
+  return det.lastSize <= (det.prevValley || det.valley) * (1 + (settings.sens - 1) * 0.6) || backUpright(obs.bows[obs.bows.length - 1]);
 }
 
 // Returns the time a new raise began (both hands up, held), or 0. After a raise the hands must
@@ -2101,7 +2117,7 @@ $("rCopy").addEventListener("click", async () => {
   const file = recordFile(r);
   try {
     if (navigator.canShare?.({ files: [file] })) {
-      await navigator.share({ files: [file], title: file.name });
+      await navigator.share({ files: [file] }); // (a title too is saved as a second little file)
       $("rCopy").textContent = "اتبعت ✓";
       return;
     }
