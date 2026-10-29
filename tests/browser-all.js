@@ -16,6 +16,7 @@ window.runAll = async (opts = {}) => {
   if (window.autoTests || opts.auto !== false) {
     try { await run("browser-auto.js"); if (window.autoTests) out.auto = await window.autoTests(); } catch (e) { out.auto = `not run: ${e.message}`; }
   }
+  try { await run("browser-ui.js"); if (window.uiTests) out.ui = await window.uiTests(); } catch (e) { out.ui = `not run: ${e.message}`; }
   // the real records (kept on the PC only): each replayed with three guesses of the face size
   await run("browser-replay.js");
   const records = opts.records || ["v6-asr-2026-10-16", "v8-asr-2026-10-17", "v10-dhuhr-mixed-2026-10-19", "v12-isha-mixed-2026-10-19",

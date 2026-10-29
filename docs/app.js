@@ -20,9 +20,9 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 15;
+const APP_VERSION = 16;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=41";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=42";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -1940,13 +1940,28 @@ function showReport(rec) {
   const rakahs = new Set(rec.segs.filter((s) => isRakah(s.g)).map((s) => s.g)).size;
   const how = rec.how === "salam" ? "انتهت بالسلام تلقائيًا" : "انتهت بزرار الإنهاء";
   $("rHow").textContent = `${ar(rakahs)} من ${ar(rec.n)} ركعات — ${how}`;
-  $("rLog").innerHTML = logHTML(rec.segs, -1);
+  $("rLog").innerHTML = logHTML(rec.segs, -1) + todoHTML();
   app.shown = rec;
   $("rCopy").hidden = !rec.trace;
-  $("rCopy").textContent = "انسخ التسجيل";
+  $("rCopy").textContent = "ابعت التسجيل";
   $("rTrace").hidden = true;
   show("report");
   $("rLog").scrollTop = 0;
+}
+
+// Today's prayers not in the history yet, at the very bottom of the report (under its steps, so the
+// screen stays as it is): one tap starts the next one. The day runs from 3 at night (a late Isha
+// belongs to the day before).
+const DAY_FROM_H = 3;
+const RAKAH_TEXT = { 2: "ركعتين", 3: "٣ ركعات", 4: "٤ ركعات" };
+const prayerDay = (t) => new Date(t - DAY_FROM_H * 3600 * 1000).toDateString();
+function todoHTML() {
+  const today = prayerDay(now());
+  const done = new Set(load(HIST_KEY, []).filter((r) => prayerDay(r.t0) === today).map((r) => r.key));
+  const left = Object.keys(PRAYERS).filter((k) => !done.has(k));
+  if (!left.length) return `<li class="todo"><p class="todo-title">كل صلوات النهارده اتسجلت ✓</p></li>`;
+  const buttons = left.map((k) => `<button class="prayer" data-key="${k}"><span>${PRAYERS[k].name}</span><small>${RAKAH_TEXT[PRAYERS[k].n]}</small></button>`).join("");
+  return `<li class="todo"><p class="todo-title">صلوات النهارده اللي لسه ما اتسجلتش</p><div class="prayers">${buttons}</div></li>`;
 }
 
 // Averages over the last 30 days, one row per prayer: whole prayer and the average length
@@ -2064,15 +2079,39 @@ $("prayerButtons").addEventListener("click", (e) => {
 $("calibCancel").addEventListener("click", () => { stopCamera(); app.mode = "home"; show("home"); });
 $("btnNext").addEventListener("click", () => { if (app.mode === "pray") addMissedBow(now()); });
 $("btnBack").addEventListener("click", () => { if (app.mode === "pray") removeLastBow(now()); });
-$("rCopy").addEventListener("click", () => {
-  if (!app.shown?.trace) return;
-  const text = traceText(app.shown);
+// The record as a file for the phone's share menu: "Save to Files" -> Dropbox -> "Prayer Counter",
+// where it is read without copying and pasting. Where files cannot be shared, it is copied instead.
+function recordFile(r) {
+  const d = new Date(r.t0), p2 = (x) => String(x).padStart(2, "0");
+  const name = `prayer_${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}_${p2(d.getHours())}-${p2(d.getMinutes())}_${r.key}_v${r.v ?? "x"}.txt`;
+  return new File([traceText(r)], name, { type: "text/plain" });
+}
+function copyRecord(r) {
+  const text = traceText(r);
   const showBox = () => { const box = $("rTrace"); box.value = text; box.hidden = false; box.focus(); box.select(); };
   try {
     navigator.clipboard.writeText(text)
       .then(() => { $("rCopy").textContent = "اتنسخ — الصقه في الشات"; })
       .catch(showBox);
   } catch { showBox(); }
+}
+$("rCopy").addEventListener("click", async () => {
+  const r = app.shown;
+  if (!r?.trace) return;
+  const file = recordFile(r);
+  try {
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: file.name });
+      $("rCopy").textContent = "اتبعت ✓";
+      return;
+    }
+  } catch (e) { if (e?.name === "AbortError") return; } // the share menu was closed: nothing to do
+  copyRecord(r);
+});
+// the prayers left today, under the report: start one
+$("rLog").addEventListener("click", (e) => {
+  const b = e.target.closest(".prayer");
+  if (b) choosePrayer(b.dataset.key);
 });
 $("btnStop").addEventListener("click", () => finish(now(), "button"));
 $("openHistory").addEventListener("click", showHistory);

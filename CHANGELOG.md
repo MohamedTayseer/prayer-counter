@@ -4,6 +4,18 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v16 — the prayers left today, and sending the record
+- At the very bottom of the screen shown after a prayer (under its steps, so the
+  rest of the screen stays as it was): today's prayers that are not recorded
+  yet. One tap starts the next one. The day runs from 3 at night, so an Isha
+  prayed after midnight still belongs to the day before. When all five are
+  recorded it says so.
+- "انسخ التسجيل" is now "ابعت التسجيل": it opens the phone's share menu with the
+  record as a file (named like prayer_2026-10-29_13-05_dhuhr_v16.txt). Choose
+  "Save to Files" and Dropbox once; the phone remembers the place. The records
+  are then read from Dropbox, with no copying and pasting. Where files cannot
+  be shared, the record is copied as before.
+
 ## v15 — small bows and the start button (28 Oct, Dhuhr)
 - Found from a real record (Dhuhr, sitting): the bows were small this time (the
   face grew only 10-30% and moved down a little), so sitting up between the
