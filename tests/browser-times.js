@@ -81,9 +81,10 @@ window.timesTests = async () => {
   console.log(out);
   return out;
 };
-// Results (v18): vsWeb: cairo "asr -1", the other three "same" (Asr: see above);
-// morning: fajr:done ✓ صلّيتها | dhuhr:soon* فاضل ١ س ٣٩ د | ... || قريب من القاهرة;
-// dhuhrNotPrayed: dhuhr:due أذّن من ١ س ٢١ د, asr:soon*; adhanNow: بيأذّن دلوقتي; lastMinute: فاضل ١ د;
+// Results (v18): vsWeb: cairo "asr -1", alexandria and aswan "asr +1", cairo in summer time "same" (Asr: see above);
+// morning: fajr:done ✓ صلّيتها | dhuhr:soon* فاضل 1 س 39 د | ... || قريب من القاهرة;
+// dhuhrNotPrayed: dhuhr:due أذّن من 1 س 21 د, asr:soon*; adhanNow: بيأذّن دلوقتي; lastMinute: فاضل 1 د;
 // afterIsha: fajr:soon* (tomorrow's), isha:due; before3am: isha:done, fajr:soon*; noPlace: (no time) x5,
 // "علشان تشوف مواعيد الأذان..." / حدّد مكاني; webKept: dhuhr 3 min later, "· من aladhan.com";
-// webOffline: the app's time, "النت مش شغال: المواعيد من البرنامج"; webFetched: ١١:٥٠ ص, kept 2026-12.
+// webOffline: the app's time, "النت مش شغال: المواعيد من البرنامج"; webFetched: 11:50 ص, kept 2026-12.
+// v19: the times and the time left in English digits ("2:45 م", "فاضل 1 س 45 د"); otherwise = v18.

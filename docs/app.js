@@ -20,10 +20,10 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 18;
+const APP_VERSION = 19;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=44";
-import { prayerTimes } from "./prayertimes.js?v=44";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=45";
+import { prayerTimes } from "./prayertimes.js?v=45";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -1996,7 +1996,7 @@ const WEB_RETRY_MS = 5 * 60000;                 // a month the website did not g
 // "قريب من ...": the nearest of these within 45 km (the place itself is all the times need)
 const CITIES = [
   ["القاهرة", 30.044, 31.236], ["الجيزة", 30.013, 31.209], ["شبرا الخيمة", 30.128, 31.242], ["حلوان", 29.85, 31.334],
-  ["٦ أكتوبر", 29.938, 30.914], ["القاهرة الجديدة", 30.03, 31.471], ["العبور", 30.228, 31.479], ["العاشر من رمضان", 30.297, 31.746],
+  ["6 أكتوبر", 29.938, 30.914], ["القاهرة الجديدة", 30.03, 31.471], ["العبور", 30.228, 31.479], ["العاشر من رمضان", 30.297, 31.746],
   ["الإسكندرية", 31.2, 29.919], ["بورسعيد", 31.265, 32.302], ["السويس", 29.967, 32.55], ["الإسماعيلية", 30.596, 32.272],
   ["دمياط", 31.417, 31.814], ["المنصورة", 31.041, 31.378], ["طنطا", 30.786, 31.0], ["المحلة الكبرى", 30.97, 31.166],
   ["الزقازيق", 30.587, 31.502], ["بنها", 30.466, 31.185], ["شبين الكوم", 30.552, 31.009], ["كفر الشيخ", 31.111, 30.94],
@@ -2011,12 +2011,13 @@ const webAsked = new Map();              // month asked from the website -> when
 
 const localDay = (t) => { const d = new Date(t); return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() }; };
 const nextDay = (D) => localDay(new Date(D.y, D.m - 1, D.d + 1, 12).getTime());
-const clockText = (t) => new Date(t).toLocaleTimeString("ar-EG", { hour: "numeric", minute: "2-digit" });
-// "٢ س ١٥ د": still to come rounded up (the last minute shows "١ د"), gone by rounded down
+// (v19: in English digits, as he asked: "2:45 م", "فاضل 1 س 15 د")
+const clockText = (t) => new Date(t).toLocaleTimeString("ar-EG-u-nu-latn", { hour: "numeric", minute: "2-digit" });
+// "2 س 15 د": still to come rounded up (the last minute shows "1 د"), gone by rounded down
 function durText(ms, up) {
   const mins = Math.max(0, up ? Math.ceil(ms / 60000) : Math.floor(ms / 60000));
   const h = Math.floor(mins / 60), m = mins % 60;
-  return h ? (m ? `${ar(h)} س ${ar(m)} د` : `${ar(h)} س`) : `${ar(m)} د`;
+  return h ? (m ? `${h} س ${m} د` : `${h} س`) : `${m} د`;
 }
 function nearCity(w) {
   let best = null, bestKm = 45;
@@ -2124,7 +2125,7 @@ function renderTimesNow() {
     ? "بيجيبها من aladhan.com بنفس الطريقة المصرية، شهر كل مرة. بيتبعت له مكانك التقريبي بس."
     : "بيحسبها البرنامج بطريقة الهيئة المصرية العامة للمساحة، من غير نت.";
   $("privacyNote").textContent = web
-    ? "الكاميرا بتشتغل على الموبايل بس. علشان مواعيد الأذان بيتبعت لـ aladhan.com مكانك التقريبي بس (حوالي ١٠ كم)."
+    ? "الكاميرا بتشتغل على الموبايل بس. علشان مواعيد الأذان بيتبعت لـ aladhan.com مكانك التقريبي بس (حوالي 10 كم)."
     : "الكاميرا ومكانك بيفضلوا على الموبايل بس. مفيش تسجيل ولا حاجة بتتبعت لأي مكان.";
 }
 

@@ -4,6 +4,11 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v19 — the adhan times in English digits
+- The adhan times and the time left on the start screen are now written with
+  English digits ("2:45 م", "فاضل 1 س 45 د"), as asked. Everything else in
+  the app keeps its numbers as before.
+
 ## v18 — the adhan times on the start screen
 - Each prayer on the start screen now shows today's adhan time where you are,
   and under it: how long is left (the next prayer has a gold border), "✓
