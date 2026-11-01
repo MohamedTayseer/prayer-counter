@@ -4,6 +4,9 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v20 — AM / PM
+- The adhan times on the start screen say "2:45 PM" instead of "2:45 م", as asked.
+
 ## v19 — the adhan times in English digits
 - The adhan times and the time left on the start screen are now written with
   English digits ("2:45 م", "فاضل 1 س 45 د"), as asked. Everything else in

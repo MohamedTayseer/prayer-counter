@@ -20,10 +20,10 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 19;
+const APP_VERSION = 20;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=45";
-import { prayerTimes } from "./prayertimes.js?v=45";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=46";
+import { prayerTimes } from "./prayertimes.js?v=46";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -2011,8 +2011,8 @@ const webAsked = new Map();              // month asked from the website -> when
 
 const localDay = (t) => { const d = new Date(t); return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() }; };
 const nextDay = (D) => localDay(new Date(D.y, D.m - 1, D.d + 1, 12).getTime());
-// (v19: in English digits, as he asked: "2:45 م", "فاضل 1 س 15 د")
-const clockText = (t) => new Date(t).toLocaleTimeString("ar-EG-u-nu-latn", { hour: "numeric", minute: "2-digit" });
+// (v19: in English digits, as he asked: "فاضل 1 س 15 د"; v20: the clock in English too, "2:45 PM")
+const clockText = (t) => new Date(t).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 // "2 س 15 د": still to come rounded up (the last minute shows "1 د"), gone by rounded down
 function durText(ms, up) {
   const mins = Math.max(0, up ? Math.ceil(ms / 60000) : Math.floor(ms / 60000));

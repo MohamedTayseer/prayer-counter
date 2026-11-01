@@ -88,3 +88,4 @@ window.timesTests = async () => {
 // "علشان تشوف مواعيد الأذان..." / حدّد مكاني; webKept: dhuhr 3 min later, "· من aladhan.com";
 // webOffline: the app's time, "النت مش شغال: المواعيد من البرنامج"; webFetched: 11:50 ص, kept 2026-12.
 // v19: the times and the time left in English digits ("2:45 م", "فاضل 1 س 45 د"); otherwise = v18.
+// v20: the clock as "2:45 PM" (en-US); otherwise = v19.
