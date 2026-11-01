@@ -20,9 +20,10 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 17;
+const APP_VERSION = 18;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=43";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=44";
+import { prayerTimes } from "./prayertimes.js?v=44";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -1728,6 +1729,7 @@ function bodyCheckStep(b, t) {
 // ---------- screens ----------
 function show(id) {
   for (const s of document.querySelectorAll(".screen")) s.hidden = s.id !== id;
+  if (id === "home") renderTimes(); // (a prayer may have just been recorded)
 }
 
 // The hint under the title: the way of praying's, else the phone place's (on the lap the automatic
@@ -1980,6 +1982,169 @@ function todoHTML() {
   return `<li class="todo"><p class="todo-title">صلوات النهارده اللي لسه ما اتسجلتش</p><div class="prayers">${buttons}</div></li>`;
 }
 
+// ---------- the adhan times on the start screen (v18) ----------
+// Each prayer shows today's adhan time at the phone's place, and under it: the time left (still to
+// come; the next one has a gold border), "✓ صلّيتها" (passed and recorded today, the day running from
+// 3 at night as above) or how long ago it was (passed, not recorded: orange). After Isha, Fajr shows
+// tomorrow's. The place is asked once and kept ("حدّث مكاني" asks again). The times are worked out
+// here (prayertimes.js, the Egyptian method), or taken from aladhan.com (the same method; a month at a
+// time, kept; only the area, rounded to 0.1 degree - about 10 km - is sent), with no internet the app's.
+const WHERE_KEY = "prayerCounter.where";        // {lat, lon, at}
+const TIMES_SRC_KEY = "prayerCounter.timesSrc"; // "app" or "web"
+const WEB_TIMES_KEY = "prayerCounter.webTimes"; // {area: "30,31.2", months: {"2026-11": {"1": {fajr: ms, ...}}}}
+const WEB_RETRY_MS = 5 * 60000;                 // a month the website did not give is asked again after this
+// "قريب من ...": the nearest of these within 45 km (the place itself is all the times need)
+const CITIES = [
+  ["القاهرة", 30.044, 31.236], ["الجيزة", 30.013, 31.209], ["شبرا الخيمة", 30.128, 31.242], ["حلوان", 29.85, 31.334],
+  ["٦ أكتوبر", 29.938, 30.914], ["القاهرة الجديدة", 30.03, 31.471], ["العبور", 30.228, 31.479], ["العاشر من رمضان", 30.297, 31.746],
+  ["الإسكندرية", 31.2, 29.919], ["بورسعيد", 31.265, 32.302], ["السويس", 29.967, 32.55], ["الإسماعيلية", 30.596, 32.272],
+  ["دمياط", 31.417, 31.814], ["المنصورة", 31.041, 31.378], ["طنطا", 30.786, 31.0], ["المحلة الكبرى", 30.97, 31.166],
+  ["الزقازيق", 30.587, 31.502], ["بنها", 30.466, 31.185], ["شبين الكوم", 30.552, 31.009], ["كفر الشيخ", 31.111, 30.94],
+  ["دمنهور", 31.034, 30.468], ["الفيوم", 29.308, 30.844], ["بني سويف", 29.074, 31.098], ["المنيا", 28.11, 30.75],
+  ["أسيوط", 27.181, 31.183], ["سوهاج", 26.557, 31.695], ["قنا", 26.164, 32.727], ["الأقصر", 25.687, 32.639],
+  ["أسوان", 24.089, 32.9], ["الغردقة", 27.257, 33.812], ["مرسى مطروح", 31.353, 27.237], ["العريش", 31.132, 33.803],
+  ["الطور", 28.241, 33.622], ["شرم الشيخ", 27.916, 34.33], ["الخارجة", 25.44, 30.546],
+];
+settings.timesSrc = load(TIMES_SRC_KEY, "app") === "web" ? "web" : "app";
+const timesMsg = { place: "", web: "" }; // what to say instead about the place / the website right now
+const webAsked = new Map();              // month asked from the website -> when (this session)
+
+const localDay = (t) => { const d = new Date(t); return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() }; };
+const nextDay = (D) => localDay(new Date(D.y, D.m - 1, D.d + 1, 12).getTime());
+const clockText = (t) => new Date(t).toLocaleTimeString("ar-EG", { hour: "numeric", minute: "2-digit" });
+// "٢ س ١٥ د": still to come rounded up (the last minute shows "١ د"), gone by rounded down
+function durText(ms, up) {
+  const mins = Math.max(0, up ? Math.ceil(ms / 60000) : Math.floor(ms / 60000));
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return h ? (m ? `${ar(h)} س ${ar(m)} د` : `${ar(h)} س`) : `${ar(m)} د`;
+}
+function nearCity(w) {
+  let best = null, bestKm = 45;
+  for (const [name, lat, lon] of CITIES) {
+    const km = Math.hypot((lat - w.lat) * 111, (lon - w.lon) * 111 * Math.cos((w.lat * Math.PI) / 180));
+    if (km < bestKm) { best = name; bestKm = km; }
+  }
+  return best;
+}
+const areaOf = (w) => ({ lat: Math.round(w.lat * 10) / 10, lon: Math.round(w.lon * 10) / 10 });
+
+// The times of one day (fajr, sunrise, dhuhr, asr, maghrib, isha: moments; from = "web" / "app"): the
+// website's when chosen and already kept, else worked out here (and the website asked for its month).
+function dayTimes(D, w) {
+  if (settings.timesSrc === "web") {
+    const a = areaOf(w), key = `${a.lat},${a.lon}`;
+    const kept = load(WEB_TIMES_KEY, null);
+    const got = kept?.area === key ? kept.months?.[`${D.y}-${D.m}`]?.[D.d] : null;
+    if (got) return { ...got, from: "web" };
+    askWebMonth(D.y, D.m, a, key);
+  }
+  return { ...prayerTimes(D.y, D.m, D.d, w.lat, w.lon), from: "app" };
+}
+function askWebMonth(y, m, a, key) {
+  const id = `${key}|${y}-${m}`, last = webAsked.get(id);
+  if (last && (last.pending || Date.now() - last.at < WEB_RETRY_MS)) return;
+  webAsked.set(id, { at: Date.now(), pending: true });
+  fetch(`https://api.aladhan.com/v1/calendar/${y}/${m}?latitude=${a.lat}&longitude=${a.lon}&method=5&iso8601=true`)
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+    .then((j) => {
+      const days = {};
+      for (const row of j?.data || []) {
+        const [dd, mm] = String(row?.date?.gregorian?.date || "").split("-").map(Number);
+        const at = (n) => Date.parse(String(row?.timings?.[n] || "").split(" ")[0]);
+        const day = { fajr: at("Fajr"), sunrise: at("Sunrise"), dhuhr: at("Dhuhr"), asr: at("Asr"), maghrib: at("Maghrib"), isha: at("Isha") };
+        if (mm === m && Object.values(day).every(Number.isFinite)) days[dd] = day;
+      }
+      if (Object.keys(days).length < 28) throw new Error("not a whole month");
+      const kept = load(WEB_TIMES_KEY, null);
+      const months = kept?.area === key ? kept.months || {} : {};
+      months[`${y}-${m}`] = days;
+      for (const old of Object.keys(months).sort((p, q) => { const [a1, b1] = p.split("-").map(Number), [a2, b2] = q.split("-").map(Number); return a2 * 12 + b2 - (a1 * 12 + b1); }).slice(3)) delete months[old];
+      save(WEB_TIMES_KEY, { area: key, months });
+      webAsked.set(id, { at: Date.now(), pending: false });
+      timesMsg.web = "";
+      renderTimes();
+    })
+    .catch(() => {
+      webAsked.set(id, { at: Date.now(), pending: false });
+      timesMsg.web = "النت مش شغال: المواعيد من البرنامج";
+      renderTimes();
+    });
+}
+
+// Each prayer now: { at, state: "soon" (left = ms to go) | "done" | "due" (since = ms ago) }; next = the
+// soonest still to come; null with no place yet.
+function timesState(t) {
+  const w = load(WHERE_KEY, null);
+  if (!w || !Number.isFinite(w.lat) || !Number.isFinite(w.lon)) return null;
+  const D = localDay(t - DAY_FROM_H * 3600 * 1000);
+  const T = dayTimes(D, w);
+  const today = prayerDay(t);
+  const done = new Set(load(HIST_KEY, []).filter((r) => prayerDay(r.t0) === today).map((r) => r.key));
+  const rows = {};
+  let from = T.from;
+  for (const k of Object.keys(PRAYERS)) {
+    let at = T[k];
+    if (k === "fajr" && Number.isFinite(T.isha) && t >= T.isha) { const T2 = dayTimes(nextDay(D), w); at = T2.fajr; if (T2.from !== from) from = "app"; }
+    if (!Number.isFinite(at)) { rows[k] = null; continue; }
+    rows[k] = t < at ? { at, state: "soon", left: at - t } : { at, state: done.has(k) ? "done" : "due", since: t - at };
+  }
+  const next = Object.keys(rows).filter((k) => rows[k]?.state === "soon").sort((p, q) => rows[p].at - rows[q].at)[0] || null;
+  return { rows, next, from, w };
+}
+
+// (never lets a fault here stop the start screen from showing)
+function renderTimes() {
+  try { renderTimesNow(); } catch (e) { console.warn("adhan times:", e); }
+}
+function renderTimesNow() {
+  const st = timesState(now());
+  for (const b of document.querySelectorAll("#prayerButtons .prayer")) {
+    const k = b.dataset.key, r = st?.rows[k];
+    b.classList.toggle("next", !!r && st.next === k);
+    b.dataset.state = r?.state || "";
+    const pt = b.querySelector(".pt");
+    if (!pt) continue;
+    pt.hidden = !r;
+    if (!r) continue;
+    pt.querySelector(".ptime").textContent = clockText(r.at);
+    pt.querySelector(".pleft").textContent = r.state === "soon" ? `فاضل ${durText(r.left, true)}`
+      : r.state === "done" ? "✓ صلّيتها" : r.since < 60000 ? "بيأذّن دلوقتي" : `أذّن من ${durText(r.since, false)}`;
+  }
+  const web = settings.timesSrc === "web";
+  let note = "علشان تشوف مواعيد الأذان، البرنامج محتاج يعرف مكانك.";
+  if (st) {
+    const city = nearCity(st.w);
+    note = `مواعيد الأذان حسب مكانك${city ? `: قريب من ${city}` : ""}`;
+    if (web) note += st.from === "web" ? " · من aladhan.com" : ` · ${timesMsg.web || "من البرنامج لحد ما توصل من النت"}`;
+  }
+  $("timesNote").textContent = timesMsg.place || note;
+  $("whereBtn").textContent = st ? "حدّث مكاني" : "حدّد مكاني";
+  for (const b of document.querySelectorAll("#timesSrcButtons .place")) b.setAttribute("aria-pressed", String(b.dataset.src === settings.timesSrc));
+  $("timesSrcHint").textContent = web
+    ? "بيجيبها من aladhan.com بنفس الطريقة المصرية، شهر كل مرة. بيتبعت له مكانك التقريبي بس."
+    : "بيحسبها البرنامج بطريقة الهيئة المصرية العامة للمساحة، من غير نت.";
+  $("privacyNote").textContent = web
+    ? "الكاميرا بتشتغل على الموبايل بس. علشان مواعيد الأذان بيتبعت لـ aladhan.com مكانك التقريبي بس (حوالي ١٠ كم)."
+    : "الكاميرا ومكانك بيفضلوا على الموبايل بس. مفيش تسجيل ولا حاجة بتتبعت لأي مكان.";
+}
+
+// Asks the phone where it is (the iPhone asks "Allow" the first time) and keeps it.
+function askPlace() {
+  if (!navigator.geolocation) { timesMsg.place = "الموبايل ده مش بيدّي مكانه للبرنامج."; renderTimes(); return; }
+  timesMsg.place = "بيدوّر على مكانك…";
+  renderTimes();
+  navigator.geolocation.getCurrentPosition((p) => {
+    save(WHERE_KEY, { lat: p.coords.latitude, lon: p.coords.longitude, at: Date.now() });
+    timesMsg.place = "";
+    renderTimes();
+  }, (e) => {
+    timesMsg.place = e?.code === 1
+      ? "الموبايل ما سمحش بالمكان: اسمح بيه من الإعدادات ← الخصوصية ← خدمات الموقع، وبعدين دوس «حدّد مكاني»."
+      : "ما عرفتش أوصل لمكانك دلوقتي. جرّب تاني.";
+    renderTimes();
+  }, { enableHighAccuracy: false, timeout: 20000, maximumAge: 10 * 60000 });
+}
+
 // Averages over the last 30 days, one row per prayer: whole prayer and the average length
 // of one reading, one ruku, one sujood, and each tashahhud.
 const PARTS = [
@@ -2082,6 +2247,21 @@ function sensText() {
 }
 $("appVer").textContent = `الإصدار ${ar(APP_VERSION)}`;
 showPlace();
+// the adhan times: where the phone is (asked the first time, not in the tests), where they come from;
+// kept fresh while the start screen shows
+$("whereBtn").addEventListener("click", askPlace);
+$("timesSrcButtons").addEventListener("click", (e) => {
+  const b = e.target.closest(".place");
+  if (!b) return;
+  settings.timesSrc = b.dataset.src;
+  save(TIMES_SRC_KEY, settings.timesSrc);
+  timesMsg.web = "";
+  renderTimes();
+});
+if (!SIM && !load(WHERE_KEY, null)) askPlace();
+renderTimes();
+setInterval(() => { if (!$("home").hidden) renderTimes(); }, 20000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && !$("home").hidden) renderTimes(); });
 $("sens").addEventListener("input", (e) => {
   settings.sens = Number(e.target.value);
   save(`${SENS_KEY}.${sensSlot()}`, settings.sens);
@@ -2159,6 +2339,9 @@ if (SIM) {
     auto: () => ({ eye: body.use, seat: det.seat, ref: body.ref }),
     diag: () => diag,
     match: () => app.match,
+    times: (t) => timesState(t ?? now()),
+    renderTimes: () => renderTimes(),
+    prayerTimes: (...a) => prayerTimes(...a),
     draw: (box, handRes, video, bothUp, shoulders) => drawOverlay(box, handRes, video, bothUp, shoulders),
   };
 }

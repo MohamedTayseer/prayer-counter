@@ -60,6 +60,25 @@ h2 { font: 500 1.5rem/1.3 var(--f-display); margin: 8px 0 0; }
 .prayer small { color: var(--muted); font-size: .9rem; }
 .prayer:active { background: var(--lamp-soft); border-color: var(--lamp); }
 .prayer:first-child { grid-column: 1 / -1; }
+/* v18: the start screen's prayers as a list, each with its adhan time: name and rak'ahs on one side,
+   the time and what is left (or done) on the other */
+#prayerButtons { grid-template-columns: 1fr; gap: 8px; }
+#prayerButtons .prayer {
+  display: grid; grid-template-columns: 1fr auto; grid-template-areas: "name time" "rak left";
+  align-items: baseline; column-gap: 12px; row-gap: 2px; padding: 12px 16px;
+}
+#prayerButtons .pn { grid-area: name; }
+#prayerButtons .pr { grid-area: rak; }
+#prayerButtons .pt { display: contents; font: 400 1rem/1.4 var(--f-body); } /* (not the name's big letters) */
+#prayerButtons .ptime { grid-area: time; justify-self: end; font: 500 1.2rem/1.2 var(--f-body); font-variant-numeric: tabular-nums; }
+#prayerButtons .pleft { grid-area: left; justify-self: end; font-size: .85rem; color: var(--muted); }
+#prayerButtons .prayer.next { border-color: var(--lamp); background: var(--lamp-soft); }
+#prayerButtons .prayer.next .ptime, #prayerButtons .prayer.next .pleft { color: var(--lamp); }
+#prayerButtons .prayer[data-state="done"] .ptime, #prayerButtons .prayer[data-state="due"] .ptime { color: var(--muted); font-weight: 400; }
+#prayerButtons .prayer[data-state="done"] .pleft { color: var(--ok); }
+#prayerButtons .prayer[data-state="due"] .pleft { color: var(--warn); }
+.times-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-top: -10px; }
+.times-row .link-btn { flex: none; padding: 4px 0; }
 
 .settings { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
 .settings label { font-weight: 500; }

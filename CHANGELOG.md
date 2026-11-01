@@ -4,6 +4,23 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v18 — the adhan times on the start screen
+- Each prayer on the start screen now shows today's adhan time where you are,
+  and under it: how long is left (the next prayer has a gold border), "✓
+  صلّيتها" in green if you already prayed it with the app today, or how long
+  ago its adhan was, in orange, if you did not. After Isha, Fajr shows
+  tomorrow's time. The day runs from 3 at night, like the list after a prayer.
+- The phone is asked for your place once (the iPhone asks "Allow" the first
+  time) and the app remembers it; "حدّث مكاني" asks again after you travel.
+  The nearest city is named under the list ("قريب من ...").
+- "مواعيد الأذان" in the settings: "من البرنامج" (the app works the times out
+  itself, the Egyptian Survey Authority's way, with no internet) or "من
+  الإنترنت" (aladhan.com, the same method, a month at a time; only your area,
+  rounded to about 10 km, is sent; with no internet the app's own are used).
+- Checked on 648 days in Cairo, Alexandria and Aswan: the app's own times are
+  the website's to the minute, except Asr, which can be a minute apart (the
+  website's Asr is the less exact one: checked with a third library).
+
 ## v17 — rising from ruku quickly (30 Oct: Dhuhr, Maghrib, Fajr)
 - Found from three real records sent with the new button: rising from the ruku
   quickly, the head still a little forward, the face came back to its upright
