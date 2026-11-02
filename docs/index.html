@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Reem+Kufi:wght@500;700&family=IBM+Plex+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="style.css?v=47">
+<link rel="stylesheet" href="style.css?v=48">
 </head>
 <body>
 
@@ -89,6 +89,16 @@
   </div>
   <p class="calib-msg" id="calibMsg">بنشغّل الكاميرا…</p>
   <div class="meter"><div class="meter-fill" id="calibBar"></div></div>
+  <!-- v22: the qibla compass. The ring turns with the phone; the Kaaba sits on it at the qibla; the
+       mark at the top is the way you face. Built by app.js (showQibla). -->
+  <div class="qibla" id="qibla" hidden>
+    <svg class="qdial" viewBox="-110 -118 220 228" aria-hidden="true">
+      <circle class="qface" r="96"></circle>
+      <g id="qRing"></g>
+      <path class="qmark" d="M -9 -116 L 9 -116 L 0 -100 Z"></path>
+    </svg>
+    <p class="qtext" id="qText"></p>
+  </div>
   <p class="diag"></p>
   <button class="stop" id="startNow" hidden>ابدأ من غير ما يشوف إيدي</button>
   <button class="ghost" id="calibCancel">إلغاء</button>
@@ -146,6 +156,6 @@
 
 <div class="flash" id="flash" hidden>الله أكبر</div>
 
-<script type="module" src="app.js?v=47"></script>
+<script type="module" src="app.js?v=48"></script>
 </body>
 </html>

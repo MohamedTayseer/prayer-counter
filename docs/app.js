@@ -20,10 +20,11 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 21;
+const APP_VERSION = 22;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=47";
-import { prayerTimes } from "./prayertimes.js?v=47";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=48";
+import { prayerTimes } from "./prayertimes.js?v=48";
+import { qiblaBearing, facing, turnBy } from "./qibla.js?v=48";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -1338,7 +1339,7 @@ function showDiag(force) {
   const v = $("video");
   const shText = (sh.seen ? (sh.home ? sh.score.toFixed(2) : "seen") : "-")
     + (body.use ? ` · back bend: ${body.seen && body.ref ? `${Math.round(body.lean)}°` : body.seen ? "seen" : "-"}${body.last?.raised ? " · arms up" : ""}` : "");
-  const text = `face: ${diag.face} · hands: ${diag.hands} · body: ${diag.pose} · frames: ${diag.frames} · faces: ${diag.faces} · hands up: ${diag.handsUp} · shoulders: ${shText} · turn: ${det.lastYaw.toFixed(2)} · size: ${det.valley ? (det.lastSize / det.valley).toFixed(2) : "-"} · video: ${v.videoWidth}x${v.videoHeight}` + (diag.err ? ` · error: ${diag.err}` : "");
+  const text = `face: ${diag.face} · hands: ${diag.hands} · body: ${diag.pose} · frames: ${diag.frames} · faces: ${diag.faces} · hands up: ${diag.handsUp} · shoulders: ${shText} · turn: ${det.lastYaw.toFixed(2)} · size: ${det.valley ? (det.lastSize / det.valley).toFixed(2) : "-"} · video: ${v.videoWidth}x${v.videoHeight}` + (qibla.raw ? ` · compass: ${qibla.raw}${qibla.upright ? " upright" : " flat"}` : "") + (diag.err ? ` · error: ${diag.err}` : "");
   for (const el of document.querySelectorAll(".diag")) el.textContent = text;
 }
 
@@ -1736,6 +1737,7 @@ function bodyCheckStep(b, t) {
 function show(id) {
   for (const s of document.querySelectorAll(".screen")) s.hidden = s.id !== id;
   if (id === "home") renderTimes(); // (a prayer may have just been recorded)
+  if (id !== "calib") { try { stopQibla(); } catch { /* not ready yet */ } } // (the compass only while waiting)
 }
 
 // The hint under the title: the way of praying's, else the phone place's (on the lap the automatic
@@ -1744,6 +1746,7 @@ const hintText = () => (isAuto() && settings.place === "lap" ? PLACES.lap.hint :
 
 async function choosePrayer(key) {
   initAudio();
+  startQibla(); // (inside the tap: the iPhone asks "Allow" for the compass only then)
   keepAwake();
   resetTracking();
   app.key = key;
@@ -2135,6 +2138,82 @@ function renderTimesNow() {
     : "الكاميرا ومكانك بيفضلوا على الموبايل بس. مفيش تسجيل ولا حاجة بتتبعت لأي مكان.";
 }
 
+// ---------- the qibla compass on the camera screen (v22) ----------
+// While the app waits for the takbeer: a round compass under the picture. The ring (N E S W, ticks)
+// turns with the phone, the Kaaba sits on it at the qibla, the gold mark at the top is the way the
+// person faces (the back of a standing phone, the top of one lying flat). Within QIBLA_OK_DEG the
+// dial turns green: "متجه للقبلة". The qibla comes from the place kept for the adhan times.
+const QIBLA_OK_DEG = 10;
+const QIBLA_NONE_MS = 3000; // no compass reading this long after starting = this phone gives none
+const qibla = { on: false, heading: null, shown: null, upright: false, accuracy: null, msg: "", since: 0, where: null };
+function buildQiblaRing() {
+  const pt = (a, r) => [r * Math.sin((a * Math.PI) / 180), -r * Math.cos((a * Math.PI) / 180)].map((v) => v.toFixed(1));
+  let html = "";
+  for (let a = 0; a < 360; a += 15) {
+    const big = a % 90 === 0, [x1, y1] = pt(a, big ? 76 : 84), [x2, y2] = pt(a, 94);
+    html += `<line class="qtick${big ? " big" : ""}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"></line>`;
+  }
+  for (const [a, l] of [[0, "N"], [90, "E"], [180, "S"], [270, "W"]]) {
+    const [x, y] = pt(a, 60);
+    html += `<text class="qletter${a ? "" : " n"}" data-x="${x}" data-y="${y}" x="${x}" y="${y}">${l}</text>`;
+  }
+  html += `<g id="qKaaba"><rect class="kaaba-body" x="-12" y="-12" width="24" height="24" rx="2"></rect><rect class="kaaba-band" x="-12" y="-6" width="24" height="4"></rect></g>`;
+  $("qRing").innerHTML = html;
+}
+function startQibla() {
+  try {
+    if (!$("qRing").firstChild) buildQiblaRing();
+    $("qibla").hidden = false;
+    Object.assign(qibla, { heading: null, shown: null, msg: "", since: now(), where: load(WHERE_KEY, null) });
+    const listen = () => { if (!qibla.on) { window.addEventListener("deviceorientation", onOrient); qibla.on = true; } };
+    const D = window.DeviceOrientationEvent;
+    if (!D) qibla.msg = "الموبايل ده مش بيدّي البوصلة للبرنامج.";
+    else if (!SIM && typeof D.requestPermission === "function") { // (the tests feed the compass by hand)
+      D.requestPermission().then((s) => {
+        if (s === "granted") listen();
+        else qibla.msg = "الموبايل ما سمحش بالبوصلة: اقفل البرنامج وافتحه تاني واسمح بـ «الحركة والاتجاه».";
+      }).catch(() => { qibla.msg = "ما قدرتش أشغّل البوصلة. جرّب تاني."; });
+    } else listen();
+    renderQibla();
+  } catch (e) { console.warn("qibla:", e); }
+}
+function stopQibla() {
+  if (qibla.on) window.removeEventListener("deviceorientation", onOrient);
+  qibla.on = false;
+  $("qibla").hidden = true;
+}
+function onOrient(e) {
+  const w = qibla.where;
+  const f = facing(e, w?.lat ?? 0, w?.lon ?? 0);
+  if (!f) return;
+  qibla.heading = f.heading; qibla.upright = f.upright; qibla.accuracy = f.accuracy;
+  qibla.raw = `${Math.round(e.webkitCompassHeading ?? e.alpha ?? -1)}° β${Math.round(e.beta ?? 0)} γ${Math.round(e.gamma ?? 0)} ±${Math.round(e.webkitCompassAccuracy ?? -1)}`; // (for the info line)
+}
+function renderQibla() {
+  const box = $("qibla");
+  if (box.hidden) return;
+  const w = qibla.where, text = $("qText");
+  let on = false;
+  if (!w) text.textContent = "علشان القبلة، حدّد مكانك من الشاشة الأولى («حدّد مكاني»).";
+  else if (qibla.msg) text.textContent = qibla.msg;
+  else if (qibla.heading == null) text.textContent = now() - qibla.since > QIBLA_NONE_MS ? "البوصلة مش شغالة على الموبايل ده." : "بيشغّل البوصلة…";
+  else {
+    // the ring follows the compass smoothly, always the short way round
+    qibla.shown = qibla.shown == null ? qibla.heading : (qibla.shown + turnBy(qibla.heading, qibla.shown) * 0.3 + 360) % 360;
+    const h = qibla.shown, q = qiblaBearing(w.lat, w.lon), d = turnBy(q, h);
+    $("qRing").setAttribute("transform", `rotate(${(-h).toFixed(1)})`);
+    for (const l of $("qRing").querySelectorAll("text")) l.setAttribute("transform", `rotate(${h.toFixed(1)} ${l.dataset.x} ${l.dataset.y})`); // (letters stay upright)
+    const kx = 86 * Math.sin((q * Math.PI) / 180), ky = -86 * Math.cos((q * Math.PI) / 180);
+    $("qKaaba").setAttribute("transform", `translate(${kx.toFixed(1)} ${ky.toFixed(1)}) rotate(${h.toFixed(1)})`);
+    on = Math.abs(d) <= QIBLA_OK_DEG;
+    text.textContent = on ? "✓ متجه للقبلة"
+      : qibla.accuracy != null && (qibla.accuracy < 0 || qibla.accuracy > 25) ? "البوصلة مش متأكدة: حرّك الموبايل في الهوا على شكل 8"
+      : `لف ناحية ${d > 0 ? "اليمين" : "الشمال"} لحد ما الكعبة تيجي تحت العلامة`;
+  }
+  box.classList.toggle("on", on);
+}
+setInterval(() => { if (!$("qibla").hidden) renderQibla(); }, 100);
+
 // Asks the phone where it is (the iPhone asks "Allow" the first time) and keeps it.
 function askPlace() {
   if (!navigator.geolocation) { timesMsg.place = "الموبايل ده مش بيدّي مكانه للبرنامج."; renderTimes(); return; }
@@ -2348,6 +2427,7 @@ if (SIM) {
     match: () => app.match,
     times: (t) => timesState(t ?? now()),
     renderTimes: () => renderTimes(),
+    qibla: (e) => { if (e) onOrient(e); renderQibla(); return { ...qibla, on: $("qibla").classList.contains("on"), text: $("qText").textContent, ring: $("qRing").getAttribute("transform"), kaaba: $("qKaaba")?.getAttribute("transform") }; },
     prayerTimes: (...a) => prayerTimes(...a),
     draw: (box, handRes, video, bothUp, shoulders) => drawOverlay(box, handRes, video, bothUp, shoulders),
   };

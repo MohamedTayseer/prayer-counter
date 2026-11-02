@@ -19,6 +19,7 @@ window.runAll = async (opts = {}) => {
   }
   try { await run("browser-ui.js"); if (window.uiTests) out.ui = await window.uiTests(); } catch (e) { out.ui = `not run: ${e.message}`; }
   try { await run("browser-times.js"); if (window.timesTests) out.times = await window.timesTests(); } catch (e) { out.times = `not run: ${e.message}`; }
+  try { await run("browser-qibla.js"); if (window.qiblaTests) out.qibla = await window.qiblaTests(); } catch (e) { out.qibla = `not run: ${e.message}`; }
   // the real records (kept on the PC only): each replayed with three guesses of the face size
   await run("browser-replay.js");
   const records = opts.records || ["v6-asr-2026-10-16", "v8-asr-2026-10-17", "v10-dhuhr-mixed-2026-10-19", "v12-isha-mixed-2026-10-19",

@@ -4,6 +4,17 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v22 — the qibla compass
+- While the app waits for the takbeer, a round compass shows under the camera
+  picture: the ring (N, E, S, W) turns with the phone, a small Kaaba sits on it
+  at the qibla, and the gold mark at the top is the way you face (the back of
+  the phone standing in front of you, or its top when it lies flat). Turn
+  until the Kaaba is under the mark: the compass turns green, "✓ متجه للقبلة".
+- The qibla comes from the place kept for the adhan times; the compass is
+  corrected from magnetic to true north (about 4 degrees in Egypt). The iPhone
+  asks once to allow "motion and orientation". If the compass is unsure, it
+  asks you to move the phone in a figure 8.
+
 ## v21 — the salam seen more often (2 Nov: Maghrib, Isha)
 - Found from two real records: both prayers were counted right, but the salam
   was not seen and the prayer had to be ended with the button. The first turn

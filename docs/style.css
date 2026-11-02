@@ -196,3 +196,19 @@ body.show-diag .diag { display: block; }
 .set-group { display: flex; flex-direction: column; gap: 6px; }
 .trace { width: 100%; height: 8rem; margin-bottom: 8px; font: 11px/1.4 var(--f-num); direction: ltr; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
 .calib-msg.good { color: var(--ok); }
+
+/* v22: the qibla compass on the camera screen */
+.qibla { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.qdial { width: min(62vw, 230px); height: auto; overflow: visible; }
+.qface { fill: var(--panel); stroke: var(--line); stroke-width: 2; }
+.qtick { stroke: var(--muted); stroke-width: 1.5; }
+.qtick.big { stroke: var(--text); stroke-width: 2.5; }
+.qletter { fill: var(--muted); font: 600 15px var(--f-body); text-anchor: middle; dominant-baseline: central; }
+.qletter.n { fill: var(--warn); }
+.qmark { fill: var(--lamp); }
+.kaaba-body { fill: #111; stroke: var(--lamp); stroke-width: 1.5; }
+.kaaba-band { fill: var(--lamp); }
+.qibla.on .qface { stroke: var(--ok); stroke-width: 5; fill: rgba(116, 192, 149, 0.12); }
+.qibla.on .qmark { fill: var(--ok); }
+.qtext { margin: 0; color: var(--muted); font: 500 1.05rem/1.4 var(--f-display); text-align: center; }
+.qibla.on .qtext { color: var(--ok); }
