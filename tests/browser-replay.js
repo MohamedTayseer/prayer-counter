@@ -45,13 +45,21 @@ window.replayRecord = async (S, V0, hk, raises, prayer, posture, opts = {}) => {
   if (opts.button) { simT += 100; __pc.feed(V0, 0, simT, false, { cx: 0.5, cy: cy0, h: V0 * hk }); document.getElementById("startNow").click(); }
   else for (let i = 0; i < 6; i++) { simT += 100; __pc.feed(V0, 0, simT, true, { cx: 0.5, cy: cy0, h: V0 * hk }); }
   const t0 = opts.button ? simT : simT - 500;
+  const yaws = frames.map((f) => f.yaw).sort((p, q) => p - q), yaw0 = yaws[Math.floor(yaws.length / 2)] ?? 0; // the usual head turn
   const shown = []; let lastLabel = "";
   for (let i = 0; i < frames.length; i++) {
     const f = frames[i], next = frames[i + 1] ? frames[i + 1].t : f.t + 300;
     for (let t = f.t; t < next; t += 100) {
       curT = t;
       const hands = raises.some((r) => (Array.isArray(r) ? t >= r[0] && t <= r[1] : t >= r && t < r + 600)) || !!f.arms; // (v13 records: the arms seen up)
-      __pc.feed(f.w, f.yaw + wobble(), t0 + t, hands, f.w == null ? null : { cx: 0.5, cy: f.cy, h: f.h ?? f.w * hk }, shouldersFor(f)); // (v15 records keep the real height)
+      // opts.yawGlide: the head turn moves in a straight line to the next sample (the record keeps one
+      // value every 0.3 s; a quick salam turn seen in one sample lasted less than that)
+      const yaw = opts.yawGlide && frames[i + 1] ? f.yaw + ((frames[i + 1].yaw - f.yaw) * (t - f.t)) / (next - f.t) : f.yaw;
+      // opts.dropTurned: the face tool loses a face turned to the side on every other frame (the record
+      // cannot show it: one value every 0.3 s); "turned" = 0.15 or more from the usual head turn
+      const drop = opts.dropTurned && Math.abs(yaw - yaw0) >= 0.15 && Math.round(t / 100) % 2 === 1;
+      const w = drop ? null : f.w;
+      __pc.feed(w, yaw + wobble(), t0 + t, hands, w == null ? null : { cx: 0.5, cy: f.cy, h: f.h ?? f.w * hk }, shouldersFor(f)); // (v15 records keep the real height)
       const st = __pc.state();
       const label = st.mode === "pray" ? `${st.step} ${st.group}` : st.mode;
       if (label !== lastLabel) { shown.push(`${(t / 1000).toFixed(1)} ${label}`); lastLabel = label; }

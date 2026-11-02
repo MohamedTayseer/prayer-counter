@@ -4,6 +4,15 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v21 — the salam seen more often (2 Nov: Maghrib, Isha)
+- Found from two real records: both prayers were counted right, but the salam
+  was not seen and the prayer had to be ended with the button. The first turn
+  was seen; the second turn was small and quick, and the face tool loses a
+  turned face for a frame now and then - each such gap started the turn over.
+- A face lost for a moment (under 0.3 s) no longer cancels a turn going on,
+  and the second turn of the salam needs to be held 0.1 s instead of 0.2 s.
+  Glances during the tashahhud still do not end the prayer.
+
 ## v20 — AM / PM
 - The adhan times on the start screen say "2:45 PM" instead of "2:45 م", as asked.
 

@@ -20,10 +20,10 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 20;
+const APP_VERSION = 21;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=46";
-import { prayerTimes } from "./prayertimes.js?v=46";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=47";
+import { prayerTimes } from "./prayertimes.js?v=47";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -80,6 +80,7 @@ const SALAM_KEEP = 0.65;     // a turn going on stays a turn down to this share 
 const SALAM_GAP_MS = 8000;   // the two turns of the salam come within this time of each other
 const SALAM_LOST_YAW = 0.15; // face lost right after turning at least this far = a turn to that side
 const SALAM_HOLD_MS = 200;
+const SALAM_HOLD2_MS = 100;  // the second turn (2 Nov: his was over in a few frames)
 const SALAM_ARM_MS = 1000;   // salam is only watched 1 s into the last tashahhud
 const HANDS_ARM_MS = 3000;   // raised hands are only watched 3 s into the middle tashahhud
 const HANDS_HOLD_MS = 250;   // hands must stay up this long
@@ -1166,7 +1167,11 @@ function salamCheck(seen, yaw, t) {
     const rel = yaw - sal.base;
     if (sal.side && Math.sign(rel) === sal.side && Math.abs(rel) > need(sal.side) * SALAM_KEEP) side = sal.side;
     else side = rel > need(1) ? 1 : rel < -need(-1) ? -1 : 0;
-  } else if (t - (body.use ? body.yawAt : det.lastSeen) > 300 && t - (body.use ? body.yawAt : det.lastSeen) < 2000) {
+  } else if (t - (body.use ? body.yawAt : det.lastSeen) <= 300) {
+    // the face lost for a moment (the face tool often drops a turned face for a frame or two): the
+    // turn going on goes on (v20, 2 Nov: a quick second turn was cut by such gaps and never counted)
+    side = sal.side;
+  } else if (t - (body.use ? body.yawAt : det.lastSeen) < 2000) {
     // the face tool often loses a face turned far away: use the strongest turn just before
     // (only for a while: an old turn must not stay as half a salam)
     const strongest = det.yawHist.reduce((a, [, y]) => (Math.abs(y - sal.base) > Math.abs(a) ? y - sal.base : a), 0);
@@ -1174,8 +1179,9 @@ function salamCheck(seen, yaw, t) {
   }
 
   if (side !== sal.side) { sal.side = side; sal.since = t; return; }
-  if (side === 0 || t - sal.since < SALAM_HOLD_MS) return;
-  if (pending && side === -sal.first) return finish(t, "salam");
+  const second = pending && side === -sal.first; // (quick and small: held half as long)
+  if (side === 0 || t - sal.since < (second ? SALAM_HOLD2_MS : SALAM_HOLD_MS)) return;
+  if (second) return finish(t, "salam");
   if (sal.first !== side) rec.event(t, `salam turn ${side > 0 ? "+" : "-"}`);
   sal.first = side; sal.firstAt = t;
 }

@@ -45,9 +45,19 @@ window.salamTests = async () => {
   await prayUpToLast(); feed(0.3, 5000);
   feed(0.3, 1500, { yaw: -0.65 }); feed(0.3, 10000); feed(0.3, 1500, { yaw: 0.4 }); feed(0.3, 5000);
   out.turnsTooFarApart = ended();
+  // 4. (v21, the 2 Nov records) the face tool drops the turned face on every other frame, and the second
+  //    turn is quick (0.4 s) and small (0.25 from facing): still the salam
+  const dropFeed = (ms, yaw) => { for (let i = 0; i < ms; i += 100) { const drop = (i / 100) % 2 === 1; __pc.feed(drop ? null : 0.3, yaw + wob(0.03), undefined, false, drop ? null : { cx: 0.5, cy: 0.45, h: 0.39 }, null); } };
+  for (const seed of [41, 43]) {
+    rnd = seed;
+    await prayUpToLast(); feed(0.3, 12000);
+    dropFeed(1500, -0.45); feed(0.3, 600); dropFeed(400, 0.13); feed(0.3, 5000);
+    out[`quickSecondTurnFaceDropping seed ${seed}`] = ended();
+  }
   localStorage.clear();
   return out;
 };
 // Results: v8 saw smallSecondTurn in 1 of 5 runs (the other 4 ended by hand, as in the record);
 // v9 in 5 of 5 (at 134.8 s). glancesThenSalam: both end at the real salam (148.7 s).
 // turnsTooFarApart: v8 ended it (20 s allowed), v9 does not (turns must be within 8 s).
+// v21: quickSecondTurnFaceDropping ends at the salam (v20: NOT SEEN, as on the phone); the rest = v20.
