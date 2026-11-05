@@ -49,6 +49,23 @@ window.uiTests = async () => {
     localStorage.setItem(HIST, JSON.stringify([entry("fajr", at(28, 5, 0)), entry("dhuhr", at(28, 13, 0))]));
     setNow(at(29, 2, 30)); await openFirst(); out.before3am = left(); document.getElementById("rHome").click(); }
 
+  // (v27) one tap sends every record of today (the prayer day from 3 at night), oldest first; not yesterday's,
+  // and not a prayer kept without its record
+  { const tr = { sens: 1.25, events: "0:start", match: "", samples: "1:100,0,45,0,0" };
+    localStorage.setItem(HIST, JSON.stringify([entry("maghrib", at(29, 17, 30)), entry("asr", at(29, 15, 0), { trace: tr }), entry("dhuhr", at(29, 12, 0), { trace: tr }), entry("fajr", at(29, 5, 0), { trace: tr }), entry("isha", at(28, 20, 0), { trace: tr })]));
+    setNow(at(29, 21, 0));
+    document.getElementById("openHistory").click(); await new Promise((r) => setTimeout(r, 10)); document.getElementById("hHome").click();
+    const b = document.getElementById("sendToday");
+    const before = `${b.hidden ? "HIDDEN" : b.textContent}`;
+    let shared = null; const old = { canShare: navigator.canShare, share: navigator.share };
+    navigator.canShare = () => true; navigator.share = async (d) => { shared = d; };
+    b.click(); await new Promise((r) => setTimeout(r, 30));
+    navigator.canShare = old.canShare; navigator.share = old.share;
+    out.sendToday = `${before} | files: ${shared ? shared.files.map((f) => f.name.replace(/_v\d+\.txt$/, "")).join(", ") : "NOT SHARED"} | after: ${b.textContent}`;
+    localStorage.setItem(HIST, "[]"); document.getElementById("openHistory").click(); await new Promise((r) => setTimeout(r, 10)); document.getElementById("hHome").click();
+    out.sendTodayNone = b.hidden ? "hidden (nothing today)" : `SHOWN: ${b.textContent}`;
+    out.dropboxHidden = document.getElementById("dbxSection").hidden ? "hidden" : "SHOWN"; }
+
   localStorage.clear();
   console.log(out);
   return out;
@@ -57,3 +74,5 @@ window.uiTests = async () => {
 // shareFile: prayer_2026-10-29_05-..._fajr_v16.txt | prayer-counter v16 الفجر ... | button: اتبعت ✓;
 // copyFallback: copied prayer-counter v16 ... ; tapStarts: takbeer | صلاة الظهر | screen calib: true;
 // allDone: كل صلوات النهارده اتسجلت ✓; lateIsha: dhuhr,asr,maghrib,isha; before3am: asr,maghrib,isha.
+// v27: sendToday: (3) -> files fajr 05-00, dhuhr 12-00, asr 15-00 (not yesterday's Isha, not the Maghrib
+// with no record) -> "اتبعتوا ✓ (3)"; sendTodayNone hidden; dropboxHidden hidden.

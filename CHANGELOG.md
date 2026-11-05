@@ -4,6 +4,15 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v27 — all of today's records in one tap
+- Under the prayers on the start screen: "ابعت تسجيلات النهارده (5)". One tap
+  opens the share menu with every record of today (the day runs from 3 at
+  night): Save to Files -> Dropbox saves them all at once. Each night the check
+  on the PC finds them by itself. Where files cannot be shared, all of them
+  are copied as text.
+- The Dropbox connection section is hidden again, as asked.
+- The nightly check skips a record that comes in again as a copy.
+
 ## v26 — connecting Dropbox without copying a code
 - On his iPhone, Dropbox's own page showed no code after "Allow". Now Dropbox
   sends you back to the prayer app after "Allow", and the app finishes the

@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Reem+Kufi:wght@500;700&family=IBM+Plex+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="style.css?v=52">
+<link rel="stylesheet" href="style.css?v=53">
 </head>
 <body>
 
@@ -50,6 +50,8 @@
     <p class="hint" id="timesNote"></p>
     <button class="link-btn" id="whereBtn">حدّد مكاني</button>
   </div>
+  <!-- v27: every record of today in one go (the share menu: Save to Files -> Dropbox) -->
+  <button class="ghost" id="sendToday" hidden>ابعت تسجيلات النهارده</button>
 
   <div class="settings">
     <div class="set-group" id="placeRow">
@@ -79,7 +81,8 @@
       <button class="place" data-src="web" aria-pressed="false">من الإنترنت</button>
     </div>
     <p class="hint" id="timesSrcHint"></p>
-    <!-- v25: the records go to Dropbox by themselves (connected once) -->
+    <!-- v25: the records go to Dropbox by themselves (connected once); hidden since v27, as he asked -->
+    <div class="set-group" id="dbxSection" hidden>
     <span class="set-label">التسجيلات في الـ Dropbox</span>
     <p class="hint" id="dbxState"></p>
     <div class="dbx-connect" id="dbxConnect">
@@ -88,6 +91,7 @@
       <button class="ghost" id="dbxDone">3) تمام</button>
     </div>
     <button class="link-btn" id="dbxOff" hidden>افصل الـ Dropbox</button>
+    </div>
   </div>
 
   <button class="ghost" id="checkPlace">اختبر مكان الموبايل وإيديك</button>
@@ -174,6 +178,6 @@
 
 <div class="flash" id="flash" hidden>الله أكبر</div>
 
-<script type="module" src="app.js?v=52"></script>
+<script type="module" src="app.js?v=53"></script>
 </body>
 </html>

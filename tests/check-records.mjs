@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 import { chromium } from "playwright-core";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,6 +37,8 @@ function sources() {
   return files;
 }
 const load = (p, d) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return d; } };
+// (v27: the same record sent again - all of the day at once - arrives as a copy, maybe renamed "... 2.txt")
+const hashOf = (text) => crypto.createHash("sha1").update(text).digest("hex");
 
 // a record's name here: v25-fajr-auto-2026-11-05-1703.txt (from its file name and first line)
 function localName(file, text) {
@@ -115,15 +118,25 @@ async function main() {
   fs.mkdirSync(RECORDS, { recursive: true });
   const seen = load(SEEN, {});
   const files = sources();
+  const hashes = new Set(seen.__hashes || []);
   if (args.has("--init")) {
-    for (const f of files) seen[path.basename(f)] ??= localName(f, fs.readFileSync(f, "utf8"));
+    for (const f of files) { const t = fs.readFileSync(f, "utf8"); seen[path.basename(f)] ??= localName(f, t); hashes.add(hashOf(t)); }
+    seen.__hashes = [...hashes];
     fs.writeFileSync(SEEN, JSON.stringify(seen, null, 1));
     console.log(JSON.stringify({ marked: Object.keys(seen).length }));
     return;
   }
-  const todo = files.filter((f) => args.has("--all") || !seen[path.basename(f)]);
+  let todo = files.filter((f) => args.has("--all") || !seen[path.basename(f)]);
+  if (!args.has("--all")) todo = todo.filter((f) => { // (copies of records already checked: seen, not checked again)
+    const h = hashOf(fs.readFileSync(f, "utf8"));
+    if (!hashes.has(h)) { hashes.add(h); return true; }
+    seen[path.basename(f)] = "(a copy of one checked before)";
+    return false;
+  });
+  seen.__hashes = [...hashes];
   const when = new Date().toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
   if (!todo.length) {
+    fs.writeFileSync(SEEN, JSON.stringify(seen, null, 1));
     fs.writeFileSync(REPORT, `# Nightly check, ${when}\n\nNo new records.\n\nALL OK\n`);
     fs.appendFileSync(LOG, `${when}: no new records\n`);
     console.log(JSON.stringify({ new: 0, problems: [] }));

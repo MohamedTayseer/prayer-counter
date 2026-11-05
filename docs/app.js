@@ -20,12 +20,12 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 26;
+const APP_VERSION = 27;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=52";
-import { prayerTimes } from "./prayertimes.js?v=52";
-import { qiblaBearing, facing, turnBy } from "./qibla.js?v=52";
-import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=52";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=53";
+import { prayerTimes } from "./prayertimes.js?v=53";
+import { qiblaBearing, facing, turnBy } from "./qibla.js?v=53";
+import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=53";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -1795,7 +1795,7 @@ function bodyCheckStep(b, t) {
 // ---------- screens ----------
 function show(id) {
   for (const s of document.querySelectorAll(".screen")) s.hidden = s.id !== id;
-  if (id === "home") renderTimes(); // (a prayer may have just been recorded)
+  if (id === "home") { renderTimes(); try { renderSendToday(); } catch { /* not ready yet */ } } // (a prayer may have just been recorded)
   if (id !== "calib") { try { stopQibla(); } catch { /* not ready yet */ } } // (the compass only while waiting)
 }
 
@@ -2546,6 +2546,33 @@ $("rCopy").addEventListener("click", async () => {
   } catch (e) { if (e?.name === "AbortError") return; } // the share menu was closed: nothing to do
   copyRecord(r);
 });
+// Every record of today at once (v27): he sends them all each night, in one go, with the share menu
+// (Save to Files -> Dropbox), where the nightly check on the PC finds them. Today = since 3 at night.
+function todaysRecords() {
+  const today = prayerDay(now());
+  return load(HIST_KEY, []).filter((r) => r.trace && prayerDay(r.t0) === today).reverse(); // (oldest first)
+}
+function renderSendToday() {
+  const n = todaysRecords().length, b = $("sendToday");
+  b.hidden = n === 0;
+  if (b.dataset.n !== String(n)) { b.dataset.n = String(n); b.textContent = `ابعت تسجيلات النهارده (${n})`; } // (a new prayer: the button is fresh again)
+}
+$("sendToday").addEventListener("click", async () => {
+  const recs = todaysRecords(), b = $("sendToday");
+  if (!recs.length) return;
+  const files = recs.map(recordFile);
+  try {
+    if (navigator.canShare?.({ files })) {
+      await navigator.share({ files });
+      b.textContent = `اتبعتوا ✓ (${files.length})`;
+      return;
+    }
+  } catch (e) { if (e?.name === "AbortError") return; } // (the share menu was closed)
+  // no file sharing here: all of them copied as text, one after the other
+  try { await navigator.clipboard.writeText(recs.map(traceText).join("\n\n----------\n\n")); b.textContent = "اتنسخوا — الصقهم في الشات"; }
+  catch { b.textContent = "الموبايل ده ما بيبعتش ملفات"; }
+});
+renderSendToday(); // (here: after the prayer day and the history are known)
 // the prayers left today, under the report: start one
 $("rLog").addEventListener("click", (e) => {
   const b = e.target.closest(".prayer");
