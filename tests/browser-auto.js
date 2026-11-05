@@ -183,6 +183,20 @@ window.autoTests = async () => {
     }
   }
 
+  // ---- v23 (5 Nov records): every takbeer makes the face look like a bow (25% bigger, a little lower,
+  // the hands beside it) while the shoulders stay put - before the ruku, on rising from it and on
+  // standing up for the next rak'ah. Only the real bows may count, and the steps must never go back. ----
+  { const fn = (w, ms, o = {}) => { for (let i = 0; i < ms; i += 100) __pc.feed(w, o.yaw ?? 0, undefined, o.hands ?? false, w == null ? null : { cx: 0.5, cy: o.cy ?? 0.42, h: o.h ?? 0.145 }, o.sh ?? up); };
+    const T = { cy: 0.46, h: 0.16, hands: true }, R = { cy: 0.51, h: 0.185, sh: ruku }, S = { cy: 0.56, h: 0.2, sh: suj };
+    const takbeer = () => { fn(0.25, 300, { cy: 0.46, h: 0.16 }); fn(0.25, 600, T); fn(0.2, 300); }; // (the face grows as the hands come up)
+    const rak = () => { takbeer(); fn(0.27, 2500, R); fn(0.2, 500); takbeer(); fn(0.28, 2200, S); fn(0.2, 1800); fn(0.28, 2200, S); };
+    await go("fajr"); fn(0.2, 3500); fn(0.2, 1500, { hands: true }); fn(0.2, 10000);
+    rak(); fn(0.2, 10000); takbeer(); fn(0.2, 8000); rak();
+    fn(0.2, 12000); fn(0.2, 1000, { yaw: 0.5 }); fn(0.2, 600); fn(0.2, 1000, { yaw: -0.5 });
+    const ev = __pc.history()[0]?.trace?.events || "";
+    out.takbeerFaceLikeBow = `${sum()} | undo: ${(ev.match(/undo/g) || []).length}`; done();
+  }
+
   localStorage.clear();
   console.log(out);
   return out;
@@ -210,3 +224,4 @@ window.autoTests = async () => {
 // all 12 bows right + 1 extra (v16: the ruku and sujood 1 of rak'ah 2 as one); Maghrib 20 steps, salam,
 // 3 extra after rak'ah 3; Fajr 13 steps, salam (with only the counted raises, v16: not ended, the second
 // sujood of rak'ah 2 missing - as on the phone).
+// v23: takbeerFaceLikeBow 13 steps, missed 0, extra 0, no undo (v22: the takbeers counted as bows and undone).

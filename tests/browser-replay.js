@@ -47,6 +47,8 @@ window.replayRecord = async (S, V0, hk, raises, prayer, posture, opts = {}) => {
   const t0 = opts.button ? simT : simT - 500;
   const yaws = frames.map((f) => f.yaw).sort((p, q) => p - q), yaw0 = yaws[Math.floor(yaws.length / 2)] ?? 0; // the usual head turn
   const shown = []; let lastLabel = "";
+  const screen = []; let lastView = "";
+  let backs = 0, screenBacks = 0, lastPtr = 0, lastVp = 0;
   for (let i = 0; i < frames.length; i++) {
     const f = frames[i], next = frames[i + 1] ? frames[i + 1].t : f.t + 300;
     for (let t = f.t; t < next; t += 100) {
@@ -63,13 +65,18 @@ window.replayRecord = async (S, V0, hk, raises, prayer, posture, opts = {}) => {
       const st = __pc.state();
       const label = st.mode === "pray" ? `${st.step} ${st.group}` : st.mode;
       if (label !== lastLabel) { shown.push(`${(t / 1000).toFixed(1)} ${label}`); lastLabel = label; }
+      // what the screen showed (v23: a step shows once it has lasted 1 s)
+      const vlabel = st.mode === "pray" ? `${st.view ?? st.step} ${st.viewGroup ?? st.group}` : st.mode;
+      if (vlabel !== lastView) { screen.push(`${(t / 1000).toFixed(1)} ${vlabel}`); lastView = vlabel; }
+      // steps going back (the counted one, and the one on the screen): what confuses while praying
+      if (st.mode === "pray") { if (st.ptr < lastPtr) backs++; if ((st.viewPtr ?? st.ptr) < lastVp) screenBacks++; lastPtr = st.ptr; lastVp = st.viewPtr ?? st.ptr; }
     }
   }
   const stillPraying = __pc.state().mode === "pray";
   if (stillPraying) document.getElementById("btnStop").click(); // not ended by a salam: end it here
   const h = __pc.history()[0];
   document.getElementById("rHome").click();
-  return { ended: stillPraying ? "NOT ENDED (stopped by the replay)" : h?.how, steps: h?.segs.length, match: h?.trace.match, events: h?.trace.events, spoken: spoken.join(", "), shown: shown.join(" | ") };
+  return { ended: stillPraying ? "NOT ENDED (stopped by the replay)" : h?.how, steps: h?.segs.length, match: h?.trace.match, events: h?.trace.events, spoken: spoken.join(", "), shown: shown.join(" | "), screen: screen.join(" | "), backs, screenBacks };
 };
 // (v13 records: runAll replays them with hk 0.7 / 0.85 / 1.0.)
 // v7 on the 2026-10-16 Asr record: all three guesses end at the salam with 26 steps,

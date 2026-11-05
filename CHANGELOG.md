@@ -4,6 +4,21 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v23 — the takbeer is no longer taken for a bow (5 Nov: Dhuhr, Isha)
+- Found from two real records: each time the hands go up for a takbeer, the
+  face looks like it bows (10-30% bigger, a little lower, the hands beside it)
+  while the shoulders do not move at all. The app showed "the ruku" for a
+  moment and then took it back; in the Isha such a moment was kept as the first
+  ruku, every step after it was one off, and the second rak'ah ran together.
+- While the hands are up, and half a second after, the face alone cannot start
+  a bow: the shoulders must go down too (in every real bow they do).
+- A takbeer whose face looks bowed still counts as a raise; a "bow" less than
+  a second old when the hands go up is dropped (it was the takbeer).
+- The screen shows a step once it has lasted 1 second, so anything the app
+  would take back never shows; the real steps appear a moment later.
+- Played back, both prayers come out right with the steps never going back;
+  the older records come out the same or better.
+
 ## v22 — the qibla compass
 - While the app waits for the takbeer, a round compass shows under the camera
   picture: the ring (N, E, S, W) turns with the phone, a small Kaaba sits on it
