@@ -4,6 +4,20 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v24 — a check-up of all 14 recorded prayers
+- All the recorded prayers were played back through the app with small changes
+  (face shape, head wobble, dropped frames, hands seen earlier or later). Nine
+  of the fourteen showed no wrong step at all on the screen; the rest are
+  below.
+- Looking away is not a bow: a face turned far to the side cannot start one,
+  and a "bow" under 3 s old whose head stays turned away is dropped (21 Oct,
+  Fajr: the head turned far to the side and down for 2 s was taken for a bow).
+- The salam is watched from 5 s into the last tashahhud (a glance while
+  sitting up from the last sujood was taken for its first turn).
+- Better records for finding problems without trying them yourself: 10 samples
+  a second (about 4 before), whether the hands were up in every sample, and the
+  very last frame (the salam's second turn was always missing).
+
 ## v23 — the takbeer is no longer taken for a bow (5 Nov: Dhuhr, Isha)
 - Found from two real records: each time the hands go up for a takbeer, the
   face looks like it bows (10-30% bigger, a little lower, the hands beside it)

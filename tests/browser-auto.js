@@ -225,3 +225,4 @@ window.autoTests = async () => {
 // 3 extra after rak'ah 3; Fajr 13 steps, salam (with only the counted raises, v16: not ended, the second
 // sujood of rak'ah 2 missing - as on the phone).
 // v23: takbeerFaceLikeBow 13 steps, missed 0, extra 0, no undo (v22: the takbeers counted as bows and undone).
+// v24: fajr21Oct 13 (missed 0, extra 0: the turned-away moment is no bow any more; v23: extra 1). Rest = v23.

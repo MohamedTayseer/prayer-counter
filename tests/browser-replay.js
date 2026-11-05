@@ -17,11 +17,11 @@
 window.replayRecord = async (S, V0, hk, raises, prayer, posture, opts = {}) => {
   localStorage.clear();
   let rnd = opts.seed || 7; const wobble = () => { rnd = (rnd * 16807) % 2147483647; return ((rnd / 2147483647) - 0.5) * 2 * (opts.yawNoise || 0); };
-  const samples = S.trim().split(" ").map((x) => { const [t, rest] = x.split(":"); const v = rest.split(",").map(Number); return { t: Number(t) * 100, size: v[0], y: v[2], turn: v[3], bowed: v[4], sh: v.length >= 6 ? v[5] : -1, arms: v[8] === 1, face: v.length >= 10 ? v[9] : null, fh: v.length >= 12 ? v[11] : null }; });
+  const samples = S.trim().split(" ").map((x) => { const [t, rest] = x.split(":"); const v = rest.split(",").map(Number); return { t: Number(t) * 100, size: v[0], y: v[2], turn: v[3], bowed: v[4], sh: v.length >= 6 ? v[5] : -1, arms: v[8] === 1, face: v.length >= 10 ? v[9] : null, fh: v.length >= 12 ? v[11] : null, raised: v.length >= 13 ? v[12] === 1 : null }; });
   const abs = samples.some((s) => s.face != null && s.face >= 0);
   let V = V0, lastSeenBowed = null; const frames = [];
   samples.forEach((s, i) => {
-    if (abs) { const w = s.face >= 0 ? s.face / 1000 : null; frames.push({ t: s.t, w, cy: s.y >= 0 ? s.y / 100 : 0.5, yaw: s.turn / 100, arms: s.arms, h: s.fh > 0 ? s.fh / 1000 : null, sh: s.sh }); return; }
+    if (abs) { const w = s.face >= 0 ? s.face / 1000 : null; frames.push({ t: s.t, w, cy: s.y >= 0 ? s.y / 100 : 0.5, yaw: s.turn / 100, arms: s.arms, h: s.fh > 0 ? s.fh / 1000 : null, sh: s.sh, raised: s.raised }); return; }
     if (s.bowed === 0 && i > 0 && samples[i - 1].bowed === 1 && lastSeenBowed) V = lastSeenBowed;
     const w = s.size < 0 ? null : V * s.size / 100;
     if (s.bowed === 1 && w) lastSeenBowed = w;
@@ -49,11 +49,13 @@ window.replayRecord = async (S, V0, hk, raises, prayer, posture, opts = {}) => {
   const shown = []; let lastLabel = "";
   const screen = []; let lastView = "";
   let backs = 0, screenBacks = 0, lastPtr = 0, lastVp = 0;
+  const viewTrail = [[0, 0]]; // [ms after the start, step on the screen]
   for (let i = 0; i < frames.length; i++) {
     const f = frames[i], next = frames[i + 1] ? frames[i + 1].t : f.t + 300;
     for (let t = f.t; t < next; t += 100) {
       curT = t;
-      const hands = raises.some((r) => (Array.isArray(r) ? t >= r[0] && t <= r[1] : t >= r && t < r + 600)) || !!f.arms; // (v13 records: the arms seen up)
+      // (v24 records keep in every sample whether the hands were up: then that is all that is used)
+      const hands = f.raised != null ? f.raised : raises.some((r) => (Array.isArray(r) ? t >= r[0] && t <= r[1] : t >= r && t < r + 600)) || !!f.arms; // (v13 records: the arms seen up)
       // opts.yawGlide: the head turn moves in a straight line to the next sample (the record keeps one
       // value every 0.3 s; a quick salam turn seen in one sample lasted less than that)
       const yaw = opts.yawGlide && frames[i + 1] ? f.yaw + ((frames[i + 1].yaw - f.yaw) * (t - f.t)) / (next - f.t) : f.yaw;
@@ -69,6 +71,7 @@ window.replayRecord = async (S, V0, hk, raises, prayer, posture, opts = {}) => {
       const vlabel = st.mode === "pray" ? `${st.view ?? st.step} ${st.viewGroup ?? st.group}` : st.mode;
       if (vlabel !== lastView) { screen.push(`${(t / 1000).toFixed(1)} ${vlabel}`); lastView = vlabel; }
       // steps going back (the counted one, and the one on the screen): what confuses while praying
+      if (st.mode === "pray" && (st.viewPtr ?? st.ptr) !== lastVp) viewTrail.push([t, st.viewPtr ?? st.ptr]);
       if (st.mode === "pray") { if (st.ptr < lastPtr) backs++; if ((st.viewPtr ?? st.ptr) < lastVp) screenBacks++; lastPtr = st.ptr; lastVp = st.viewPtr ?? st.ptr; }
     }
   }
@@ -76,7 +79,7 @@ window.replayRecord = async (S, V0, hk, raises, prayer, posture, opts = {}) => {
   if (stillPraying) document.getElementById("btnStop").click(); // not ended by a salam: end it here
   const h = __pc.history()[0];
   document.getElementById("rHome").click();
-  return { ended: stillPraying ? "NOT ENDED (stopped by the replay)" : h?.how, steps: h?.segs.length, match: h?.trace.match, events: h?.trace.events, spoken: spoken.join(", "), shown: shown.join(" | "), screen: screen.join(" | "), backs, screenBacks };
+  return { ended: stillPraying ? "NOT ENDED (stopped by the replay)" : h?.how, steps: h?.segs.length, match: h?.trace.match, events: h?.trace.events, spoken: spoken.join(", "), shown: shown.join(" | "), screen: screen.join(" | "), backs, screenBacks, viewTrail, segs: (h?.segs || []).map((x) => [x.start - h.t0, x.end - h.t0]), recT0: h ? h.t0 - (t0 + 0) : 0 };
 };
 // (v13 records: runAll replays them with hk 0.7 / 0.85 / 1.0.)
 // v7 on the 2026-10-16 Asr record: all three guesses end at the salam with 26 steps,

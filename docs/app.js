@@ -20,11 +20,11 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 23;
+const APP_VERSION = 24;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=49";
-import { prayerTimes } from "./prayertimes.js?v=49";
-import { qiblaBearing, facing, turnBy } from "./qibla.js?v=49";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=50";
+import { prayerTimes } from "./prayertimes.js?v=50";
+import { qiblaBearing, facing, turnBy } from "./qibla.js?v=50";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -82,7 +82,9 @@ const SALAM_GAP_MS = 8000;   // the two turns of the salam come within this time
 const SALAM_LOST_YAW = 0.15; // face lost right after turning at least this far = a turn to that side
 const SALAM_HOLD_MS = 200;
 const SALAM_HOLD2_MS = 100;  // the second turn (2 Nov: his was over in a few frames)
-const SALAM_ARM_MS = 1000;   // salam is only watched 1 s into the last tashahhud
+const SALAM_ARM_MS = 5000;   // salam is only watched 5 s into the last tashahhud (5 Nov: a glance while
+                             // sitting up from the last sujood was taken for its first turn; his salam
+                             // comes 11 s or more into it)
 const HANDS_ARM_MS = 3000;   // raised hands are only watched 3 s into the middle tashahhud
 const HANDS_HOLD_MS = 250;   // hands must stay up this long
 const RUKU_SOON_MS = 6000;   // after the takbeer before ruku, a smaller bow counts for this long
@@ -93,6 +95,11 @@ const MIN_BOW_MS = 1000;     // a bow shorter than this is a twitch, not a ruku 
 // the hands are up, and this long after, the face alone cannot start a bow: the shoulders must too.
 const TAKBEER_FACE_MS = 500;
 const TAKBEER_SH = 0.3;      // ...the shoulders this far into a lean (a real bow: 0.6-3 within 0.3 s)
+// A face turned far to the side is looking away, not bowing (21 Oct, Fajr: the head turned 1.3 to the
+// side and down for 2 s was taken for a bow; in all the real bows recorded it turned 0.24 at most).
+const TURNED_AWAY = 0.5;
+const AWAY_TURN_MS = 300;      // ...turned away this long in a bow younger than AWAY_BOW_MAX_MS: not a bow
+const AWAY_BOW_MAX_MS = 3000;
 const VIEW_HOLD_MS = 1000;   // the screen shows a step once it has lasted this long (what is undone
                              // sooner - a twitch, a short rise - never shows)
 const MIN_RISE_MS = 800;     // a rise shorter than this between two bows is a twitch too (a real one measures 1 s+)
@@ -282,6 +289,10 @@ function backUpright(bow) {
 function takbeerFace(t) {
   return sh.seen && sh.home != null && sh.score < TAKBEER_SH && hands.lastUpAt > 0 && t - hands.lastUpAt < TAKBEER_FACE_MS;
 }
+// The head is turned far from the person's own "facing the phone" turn (see TURNED_AWAY).
+// (not while just back from standing, and not for a turn reading the face tool cannot give - a face
+// seen from above, standing over the phone, reads -3 to -7: 19 Oct, Isha)
+const turnedAway = () => !stand.visit && Math.abs(det.lastYaw) < 2 && Math.abs(det.lastYaw - sal.base) > TURNED_AWAY;
 
 // How far into a bow the shoulders are: in ruku and sujood they come down and closer (wider).
 // The sensitivity setting works on them the same way as on the face.
@@ -566,7 +577,7 @@ function bowStep(w, t) {
       if (visit && visitRest(visit, size, t)) return; // not sitting after all: standing again
       if (det.relearn) relearnStep(size, t);
       if (!det.relearn && (!visit || visit.seatAt > 0 || deep(size))) {
-        if (det.score >= need && !takbeerFace(t)) { want = "near"; det.nearBy = "face"; }
+        if (det.score >= need && !takbeerFace(t) && !turnedAway()) { want = "near"; det.nearBy = "face"; }
         else if (shOn && sh.score >= need) { want = "near"; det.nearBy = "shoulders"; }
       }
     } else {
@@ -582,6 +593,20 @@ function bowStep(w, t) {
       // the face back at its upright height and the shoulders back up, the face still a bit bigger
       else if (backUpright(bow)) { want = "far"; det.farBy = "back"; }
       if (bow?.lostSince) { bow.lostLowMs += t - bow.lostSince; bow.lostSince = 0; }
+      // looking away in what began as a bow (21 Oct, Fajr: the face went down, then the head turned 1.2 to
+      // the side): a young "bow" whose head stays turned away is no bow at all
+      if (bow && bow.e == null && !bow.virtual && turnedAway()) {
+        if (!bow.awaySince) bow.awaySince = t;
+        else if (t - bow.awaySince >= AWAY_TURN_MS && t - bow.s < AWAY_BOW_MAX_MS) {
+          obs.bows.pop();
+          det.pose = "far"; det.cand = null; det.score = 0;
+          det.valley = det.prevValley || det.valley;
+          if (det.prevHome) det.home = det.prevHome;
+          rec.event(t, "undo: looking away, not a bow");
+          realign(t);
+          return;
+        }
+      } else if (bow) bow.awaySince = 0;
       if (want === "near" && satDown(size, t)) want = "far";
     }
   } else if (det.pose === "far") {
@@ -599,7 +624,7 @@ function bowStep(w, t) {
       // that bow: only once the face has been seen again.
       const atBottom = det.pos && det.pos.cy + det.pos.h / 2 > 0.92;
       const faceSinceUp = det.farBy !== "shoulders" || det.lastSeen >= det.farAt;
-      if (faceSinceUp && (det.score >= 0.5 || atBottom) && !takbeerFace(t)) { want = "near"; det.nearBy = "face"; } // (hands over the face in a takbeer: not a bow)
+      if (faceSinceUp && (det.score >= 0.5 || atBottom) && !takbeerFace(t) && !turnedAway()) { want = "near"; det.nearBy = "face"; } // (hands over the face in a takbeer, or looking away: not a bow)
       else if (shOn && sh.score >= SH_NEAR_LOST) { want = "near"; det.nearBy = "shoulders"; }
     }
   } else if (det.pose === "near") {
@@ -1049,8 +1074,8 @@ const rec = {
   reset() { this.t0 = 0; this.lastAt = 0; this.samples = []; this.events = []; },
   start(t) { this.reset(); this.t0 = t; },
   rel(t) { return Math.round((t - this.t0) / 100); },
-  sample(t) {
-    if (!this.t0 || t - this.lastAt < 250) return;
+  sample(t, force = false) {
+    if (!this.t0 || (t - this.lastAt < 100 && !force)) return; // (10 a second since v24; ~4 before)
     this.lastAt = t;
     const seen = det.seen && det.valley;
     const size = seen ? Math.round((det.lastSize / det.valley) * 100) : -1;
@@ -1062,7 +1087,7 @@ const rec = {
     const fw = det.seen ? Math.round(det.ema * 1000) : -1;
     const st = stand.on ? 1 : stand.visit ? 2 : 0;
     const fh = det.seen && det.raw ? Math.round(det.raw.h * 1000) : -1;
-    this.samples.push(`${this.rel(t)}:${size},${Math.round(det.score * 100)},${cy},${Math.round(det.lastYaw * 100)},${det.pose === "near" ? 1 : 0},${shs},${hc},${bl},${arms},${fw},${st},${fh}`);
+    this.samples.push(`${this.rel(t)}:${size},${Math.round(det.score * 100)},${cy},${Math.round(det.lastYaw * 100)},${det.pose === "near" ? 1 : 0},${shs},${hc},${bl},${arms},${fw},${st},${fh},${hands.lastUpAt === t ? 1 : 0}`); // (last: hands or arms raised now, v24)
   },
   event(t, what) { if (this.t0) this.events.push(`${this.rel(t)}:${what}`); },
 };
@@ -1879,6 +1904,7 @@ function finish(t, how) {
     g: s.g, label: s.label, start: app.starts[i], end: app.starts[i + 1] ?? t,
   }));
   flushHands(t);
+  rec.sample(t, true); // (the frame that ended it: the salam's second turn, v24)
   rec.event(t, `end ${how} (facing ${sal.base.toFixed(2)})`);
   const entry = {
     id: app.t0, v: APP_VERSION, key: app.key, name: p.name, n: p.n, place: settings.place, posture: settings.posture,
@@ -1901,7 +1927,8 @@ function traceText(r) {
   const v = r.v ?? 0;
   const fields = ["t:size,score,y,turn,bowed", "t:size,score,y,turn,bowed,shoulders", "t:size,score,y,turn,bowed,shoulders,hands",
     "t:size,score,y,turn,bowed,shoulders,hands,body,arms", "t:size,score,y,turn,bowed,shoulders,hands,body,arms,face,standing",
-    "t:size,score,y,turn,bowed,shoulders,hands,body,arms,face,standing,faceh"][v >= 15 ? 5 : v >= 13 ? 4 : Math.max(0, Math.min(3, v - 7))];
+    "t:size,score,y,turn,bowed,shoulders,hands,body,arms,face,standing,faceh",
+    "t:size,score,y,turn,bowed,shoulders,hands,body,arms,face,standing,faceh,raised"][v >= 24 ? 6 : v >= 15 ? 5 : v >= 13 ? 4 : Math.max(0, Math.min(3, v - 7))];
   return `${head}\nSTEPS ${steps}\nEVENTS ${r.trace.events}${match}\nSAMPLES ${fields} ${r.trace.samples}`;
 }
 
