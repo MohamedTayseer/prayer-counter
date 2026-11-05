@@ -212,3 +212,9 @@ body.show-diag .diag { display: block; }
 .qibla.on .qmark { fill: var(--ok); }
 .qtext { margin: 0; color: var(--muted); font: 500 1.05rem/1.4 var(--f-display); text-align: center; }
 .qibla.on .qtext { color: var(--ok); }
+
+/* v25: connecting Dropbox (in the settings) */
+.dbx-connect { display: flex; flex-direction: column; gap: 8px; }
+.dbx-open { display: block; text-align: center; text-decoration: none; color: var(--text); }
+#dbxCode { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; color: var(--text); font: 400 1rem/1.4 var(--f-body); text-align: center; }
+.dbx-sent { text-align: center; }

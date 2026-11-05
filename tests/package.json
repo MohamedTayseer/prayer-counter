@@ -1,0 +1,9 @@
+{
+  "name": "prayer-counter-tests",
+  "private": true,
+  "description": "Tools for the nightly check of the prayer records (check-records.mjs). The app itself needs none of this.",
+  "type": "module",
+  "devDependencies": {
+    "playwright-core": "^1.56.1"
+  }
+}

@@ -10,3 +10,5 @@ prayer-counter-qr.jpg
 tests/records/
 # private notes about the user and plans: kept on this PC only
 notes/
+# tools for the nightly record check (installed by npm in tests/)
+tests/node_modules/

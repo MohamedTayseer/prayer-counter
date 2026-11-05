@@ -20,11 +20,12 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 24;
+const APP_VERSION = 25;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=50";
-import { prayerTimes } from "./prayertimes.js?v=50";
-import { qiblaBearing, facing, turnBy } from "./qibla.js?v=50";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=51";
+import { prayerTimes } from "./prayertimes.js?v=51";
+import { qiblaBearing, facing, turnBy } from "./qibla.js?v=51";
+import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush } from "./dropbox.js?v=51";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -1917,7 +1918,57 @@ function finish(t, how) {
   hist.forEach((r, i) => { if (i >= 10) delete r.trace; }); // keep the detailed record of the last 10 only
   save(HIST_KEY, hist.slice(0, 200));
   showReport(entry);
+  sendToDropbox(entry);
 }
+
+// ---------- the records to Dropbox by themselves (v25, see dropbox.js) ----------
+function sendToDropbox(entry) {
+  if (!dbxConnected() || !entry?.trace) return;
+  dbxQueue(recordFile(entry).name, traceText(entry));
+  const line = $("rDbx");
+  line.hidden = false; line.textContent = "بيتبعت للـ Dropbox…";
+  flushDropbox().then((res) => {
+    line.textContent = res.error === "revoked" ? "اتفصل من الـ Dropbox: وصّله تاني من الإعدادات."
+      : res.left ? "هيتبعت للـ Dropbox لوحده لما النت يرجع." : "اتبعت للـ Dropbox ✓";
+  });
+}
+async function flushDropbox() {
+  const res = dbxWaiting() && dbxConnected() ? await dbxFlush() : { sent: 0, left: dbxWaiting(), error: "" };
+  renderDbx();
+  return res;
+}
+let dbxMsg = "";
+async function renderDbx() {
+  try {
+    const on = dbxConnected(), waiting = dbxWaiting();
+    $("dbxState").textContent = dbxMsg || (on
+      ? `متوصل ✓ — كل تسجيل بيتبعت لوحده بعد الصلاة (Dropbox ← Apps).${waiting ? " فيه تسجيل مستني النت." : ""}`
+      : "وصّل الـ Dropbox مرة واحدة، وكل تسجيل هيتبعت لوحده بعد الصلاة.");
+    $("dbxConnect").hidden = on;
+    $("dbxOff").hidden = !on;
+    if (!on) $("dbxOpen").href = await dbxConnectUrl();
+    renderTimes(); // (the privacy line says where the records go)
+  } catch (e) { console.warn("dropbox:", e); }
+}
+$("dbxDone").addEventListener("click", async () => {
+  const code = $("dbxCode").value;
+  if (!code.trim()) { dbxMsg = "الصق الكود اللي ظهرلك في الـ Dropbox الأول."; return renderDbx(); }
+  dbxMsg = "بيوصّل…"; renderDbx();
+  const err = await dbxFinishConnect(code);
+  dbxMsg = err; $("dbxCode").value = "";
+  await renderDbx();
+  if (!err) flushDropbox();
+});
+$("dbxOff").addEventListener("click", () => {
+  const b = $("dbxOff");
+  if (!b.classList.contains("sure")) { b.classList.add("sure"); b.textContent = "متأكد؟ دوس تاني"; return; }
+  b.classList.remove("sure"); b.textContent = "افصل الـ Dropbox";
+  dbxDisconnect(); dbxMsg = ""; renderDbx();
+});
+renderDbx();
+if (dbxWaiting()) flushDropbox(); // (what could not go last time)
+window.addEventListener("online", () => { if (dbxWaiting()) flushDropbox(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && dbxWaiting()) flushDropbox(); });
 
 // The record as plain text, to paste in a chat when a step was missed.
 function traceText(r) {
@@ -2035,6 +2086,7 @@ function renderMeter() {
 }
 
 function showReport(rec) {
+  $("rDbx").hidden = true;
   $("rName").textContent = `صلاة ${rec.name}`;
   $("rWhen").textContent = new Date(rec.t0).toLocaleString("ar-EG", { weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit" });
   $("rTotal").textContent = fmt(rec.end - rec.t0);
@@ -2207,9 +2259,10 @@ function renderTimesNow() {
   $("timesSrcHint").textContent = web
     ? "بيجيبها من aladhan.com بنفس الطريقة المصرية، شهر كل مرة. بيتبعت له مكانك التقريبي بس."
     : "بيحسبها البرنامج بطريقة الهيئة المصرية العامة للمساحة، من غير نت.";
+  const dbx = dbxConnected() ? " تسجيل كل صلاة بيتبعت لـ Dropbox بتاعك انت بس." : "";
   $("privacyNote").textContent = web
-    ? "الكاميرا بتشتغل على الموبايل بس. علشان مواعيد الأذان بيتبعت لـ aladhan.com مكانك التقريبي بس (حوالي 10 كم)."
-    : "الكاميرا ومكانك بيفضلوا على الموبايل بس. مفيش تسجيل ولا حاجة بتتبعت لأي مكان.";
+    ? `الكاميرا بتشتغل على الموبايل بس. علشان مواعيد الأذان بيتبعت لـ aladhan.com مكانك التقريبي بس (حوالي 10 كم).${dbx}`
+    : dbx ? `الكاميرا ومكانك بيفضلوا على الموبايل بس.${dbx}` : "الكاميرا ومكانك بيفضلوا على الموبايل بس. مفيش تسجيل ولا حاجة بتتبعت لأي مكان.";
 }
 
 // ---------- the qibla compass on the camera screen (v22) ----------

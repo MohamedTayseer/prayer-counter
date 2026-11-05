@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Reem+Kufi:wght@500;700&family=IBM+Plex+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="style.css?v=50">
+<link rel="stylesheet" href="style.css?v=51">
 </head>
 <body>
 
@@ -71,6 +71,15 @@
       <button class="place" data-src="web" aria-pressed="false">من الإنترنت</button>
     </div>
     <p class="hint" id="timesSrcHint"></p>
+    <!-- v25: the records go to Dropbox by themselves (connected once) -->
+    <span class="set-label">التسجيلات في الـ Dropbox</span>
+    <p class="hint" id="dbxState"></p>
+    <div class="dbx-connect" id="dbxConnect">
+      <a class="ghost dbx-open" id="dbxOpen" href="#" target="_blank" rel="noopener">1) افتح الـ Dropbox ودوس Allow</a>
+      <input id="dbxCode" dir="rtl" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="2) الصق الكود اللي ظهرلك هنا">
+      <button class="ghost" id="dbxDone">3) تمام</button>
+    </div>
+    <button class="link-btn" id="dbxOff" hidden>افصل الـ Dropbox</button>
   </div>
 
   <button class="ghost" id="checkPlace">اختبر مكان الموبايل وإيديك</button>
@@ -136,6 +145,7 @@
   </div>
   <ol class="log" id="rLog"></ol>
   <textarea class="trace" id="rTrace" readonly hidden aria-label="تسجيل الصلاة"></textarea>
+  <p class="hint dbx-sent" id="rDbx" hidden></p>
   <nav class="bottom">
     <button class="ghost" id="rCopy" hidden>ابعت التسجيل</button>
     <button class="ghost" id="rHistory">السجل</button>
@@ -156,6 +166,6 @@
 
 <div class="flash" id="flash" hidden>الله أكبر</div>
 
-<script type="module" src="app.js?v=50"></script>
+<script type="module" src="app.js?v=51"></script>
 </body>
 </html>

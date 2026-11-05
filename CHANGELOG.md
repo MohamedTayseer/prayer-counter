@@ -4,6 +4,17 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v25 — the records go to Dropbox by themselves
+- In the settings, "التسجيلات في الـ Dropbox": connect once (open Dropbox, Allow,
+  copy the code it shows, paste it here). From then on every prayer's record
+  goes to Dropbox -> Apps -> the app's own folder by itself, right after the
+  prayer; with no internet it waits and goes later. The screen after a prayer
+  says "اتبعت للـ Dropbox ✓". The app can reach only that one folder. The
+  "ابعت التسجيل" button stays.
+- On the PC, a nightly check (tests/check-records.mjs) plays every new record
+  back through the app in a hidden Chrome and writes a short report; only when
+  something looks wrong is a fix proposed (nothing changes in the app by itself).
+
 ## v24 — a check-up of all 14 recorded prayers
 - All the recorded prayers were played back through the app with small changes
   (face shape, head wobble, dropped frames, hands seen earlier or later). Nine
