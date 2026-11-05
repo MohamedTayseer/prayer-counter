@@ -17,6 +17,7 @@ window.dropboxTests = async () => {
     return new Response("{}", { status: 404 });
   };
   const wait = (ms = 60) => new Promise((r) => setTimeout(r, ms));
+  const dbxOff = () => { const b = document.getElementById("dbxOff"); if (!b.hidden) { b.click(); b.click(); } };
   const feed = (w, ms, o = {}) => { for (let i = 0; i < ms; i += 100) __pc.feed(w, o.yaw ?? -0.1, undefined, o.hands ?? false, w == null ? null : { cx: 0.5, cy: o.cy ?? 0.45, h: 0.39 }, null); };
   const pray = async () => { // a short Fajr that ends at the salam
     document.querySelector('[data-posture="auto"]').click(); document.querySelector('[data-key="fajr"]').click(); await wait(30);
@@ -59,6 +60,22 @@ window.dropboxTests = async () => {
     // 6. disconnect (two taps)
     document.getElementById("dbxOff").click(); document.getElementById("dbxOff").click(); await wait();
     out.disconnected = `${document.getElementById("dbxState").textContent} | kept: ${localStorage.getItem("prayerCounter.dropbox") ? "TOKEN STILL THERE" : "nothing"}`;
+    // 7. (v26) back from Dropbox's "Allow" with the code: this copy began the sign-in -> it finishes by itself
+    await wait(80); // (the link is made again: a new sign-in is waiting)
+    const panel = () => `${document.getElementById("dbxPanel").hidden ? "no box" : document.getElementById("dbxPanelTitle").textContent} | code shown: ${document.getElementById("dbxPanelCode").textContent || "-"} | copy button: ${!document.getElementById("dbxPanelCopy").hidden}`;
+    const n0 = calls.length;
+    await __pc.dbxBack({ code: "BACK1", error: null, hasSignIn: true }); await wait();
+    const t2 = calls.slice(n0).find((c) => c.url.endsWith("/oauth2/token"));
+    out.backHere = `${t2 ? `${t2.body.grant_type} code=${t2.body.code} verifier ${t2.body.code_verifier?.length}` : "NO TOKEN CALL"} | ${panel()} | ${document.getElementById("dbxState").textContent.slice(0, 10)}`;
+    // ...opened in Safari (not the copy that began it): the code shown big, to copy
+    dbxOff(); await wait();
+    __pc.dbxBack({ code: "SAFARI-CODE-42", error: null, hasSignIn: false });
+    out.backInSafari = panel();
+    // ..."Cancel" on Dropbox's page
+    __pc.dbxBack({ code: null, error: "access_denied", hasSignIn: true });
+    out.backDenied = `${panel()} | ${document.getElementById("dbxPanelHint").textContent.slice(0, 30)}`;
+    document.getElementById("dbxPanelClose").click();
+    out.closed = document.getElementById("dbxPanel").hidden ? "closed" : "STILL OPEN";
   } finally {
     window.fetch = realFetch;
     localStorage.clear();
@@ -69,3 +86,5 @@ window.dropboxTests = async () => {
 // Results (v25): link www.dropbox.com, the key, S256, offline, no redirect; connect authorization_code with
 // the verifier; upload "Bearer A1" to /prayer_...txt, "اتبعت للـ Dropbox ✓"; offline: waits (1), back online:
 // 0 waiting; refresh: refresh_token R1 then the upload with the new token; disconnected: nothing kept.
+// v26: backHere: authorization_code BACK1 with the verifier, "الـ Dropbox اتوصل ✓"; backInSafari: the code shown
+// with the copy button; backDenied: "ما اتوصلش" + the hint; closed.

@@ -8,12 +8,20 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Reem+Kufi:wght@500;700&family=IBM+Plex+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="style.css?v=51">
+<link rel="stylesheet" href="style.css?v=52">
 </head>
 <body>
 
 <!-- Home: choose the prayer -->
 <section id="home" class="screen">
+  <!-- v26: back from Dropbox's "Allow": connected here, or (opened in Safari) the code to copy -->
+  <div class="dbx-panel" id="dbxPanel" hidden>
+    <p class="dbx-panel-title" id="dbxPanelTitle"></p>
+    <p class="dbx-code" id="dbxPanelCode" dir="ltr"></p>
+    <button class="stop" id="dbxPanelCopy" hidden>انسخ الكود</button>
+    <p class="hint" id="dbxPanelHint"></p>
+    <button class="link-btn" id="dbxPanelClose">تمام، اقفل</button>
+  </div>
   <header class="home-head">
     <h1>عدّاد الصلاة</h1>
     <p class="sub">قاعد أو واقف · بيعدّ الركعات والسجدات ويحسب وقت كل جزء</p>
@@ -75,7 +83,7 @@
     <span class="set-label">التسجيلات في الـ Dropbox</span>
     <p class="hint" id="dbxState"></p>
     <div class="dbx-connect" id="dbxConnect">
-      <a class="ghost dbx-open" id="dbxOpen" href="#" target="_blank" rel="noopener">1) افتح الـ Dropbox ودوس Allow</a>
+      <a class="ghost dbx-open" id="dbxOpen" href="#">1) افتح الـ Dropbox ودوس Allow</a>
       <input id="dbxCode" dir="rtl" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="2) الصق الكود اللي ظهرلك هنا">
       <button class="ghost" id="dbxDone">3) تمام</button>
     </div>
@@ -166,6 +174,6 @@
 
 <div class="flash" id="flash" hidden>الله أكبر</div>
 
-<script type="module" src="app.js?v=51"></script>
+<script type="module" src="app.js?v=52"></script>
 </body>
 </html>

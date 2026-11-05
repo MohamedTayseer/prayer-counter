@@ -20,12 +20,12 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 25;
+const APP_VERSION = 26;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=51";
-import { prayerTimes } from "./prayertimes.js?v=51";
-import { qiblaBearing, facing, turnBy } from "./qibla.js?v=51";
-import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush } from "./dropbox.js?v=51";
+import { buildSteps, alignPrayer, timeline } from "./align.js?v=52";
+import { prayerTimes } from "./prayertimes.js?v=52";
+import { qiblaBearing, facing, turnBy } from "./qibla.js?v=52";
+import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=52";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -1966,6 +1966,35 @@ $("dbxOff").addEventListener("click", () => {
   dbxDisconnect(); dbxMsg = ""; renderDbx();
 });
 renderDbx();
+// Back from Dropbox's "Allow" (v26), with the code in the address: this copy of the app began the
+// sign-in, so it finishes it here; or (an iPhone home-screen app sent to Safari) the code is shown big,
+// to copy into the home-screen app.
+function dbxPanel(title, code, hint) {
+  $("dbxPanelTitle").textContent = title;
+  $("dbxPanelCode").textContent = code || "";
+  $("dbxPanelCopy").hidden = !code;
+  $("dbxPanelHint").textContent = hint || "";
+  $("dbxPanel").hidden = false;
+}
+function dbxBack(back) {
+  if (!back) return;
+  try { history.replaceState(null, "", location.pathname); } catch { /* ignore */ } // (the code off the address)
+  if (back.error) return dbxPanel("الـ Dropbox ما اتوصلش", "", /access_denied/.test(back.error) ? "ما وافقتش في صفحة الـ Dropbox. لو حابب، جرّب تاني من الإعدادات." : `الـ Dropbox قال: ${back.error}`);
+  if (!back.hasSignIn) return dbxPanel("الكود اللي جه من الـ Dropbox", back.code, "انت فاتح البرنامج هنا في Safari. انسخ الكود، وارجع لبرنامج عداد الصلاة اللي على الشاشة الرئيسية للموبايل، وفي الإعدادات تحت «التسجيلات في الـ Dropbox» الصقه في خانة 2 ودوس «3) تمام».");
+  dbxPanel("بيوصّل الـ Dropbox…", "", "");
+  return dbxFinishConnect(back.code).then(async (err) => {
+    if (err) dbxPanel("الـ Dropbox ما اتوصلش", "", err);
+    else { dbxPanel("الـ Dropbox اتوصل ✓", "", "من دلوقتي كل تسجيل هيتبعت لوحده بعد الصلاة."); flushDropbox(); }
+    dbxMsg = ""; await renderDbx();
+  });
+}
+$("dbxPanelCopy").addEventListener("click", async () => {
+  const b = $("dbxPanelCopy");
+  try { await navigator.clipboard.writeText($("dbxPanelCode").textContent); b.textContent = "اتنسخ ✓ — ارجع للبرنامج والصقه"; }
+  catch { const r = document.createRange(); r.selectNodeContents($("dbxPanelCode")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); b.textContent = "معلّم — انسخه من القايمة"; }
+});
+$("dbxPanelClose").addEventListener("click", () => { $("dbxPanel").hidden = true; });
+dbxBack(dbxReturn());
 if (dbxWaiting()) flushDropbox(); // (what could not go last time)
 window.addEventListener("online", () => { if (dbxWaiting()) flushDropbox(); });
 document.addEventListener("visibilitychange", () => { if (!document.hidden && dbxWaiting()) flushDropbox(); });
@@ -2554,6 +2583,7 @@ if (SIM) {
     match: () => app.match,
     times: (t) => timesState(t ?? now()),
     renderTimes: () => renderTimes(),
+    dbxBack: (back) => dbxBack(back),
     qibla: (e) => { if (e) onOrient(e); renderQibla(); return { ...qibla, on: $("qibla").classList.contains("on"), text: $("qText").textContent, ring: $("qRing").getAttribute("transform"), kaaba: $("qKaaba")?.getAttribute("transform") }; },
     prayerTimes: (...a) => prayerTimes(...a),
     draw: (box, handRes, video, bothUp, shoulders) => drawOverlay(box, handRes, video, bothUp, shoulders),

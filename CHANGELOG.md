@@ -4,6 +4,14 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v26 — connecting Dropbox without copying a code
+- On his iPhone, Dropbox's own page showed no code after "Allow". Now Dropbox
+  sends you back to the prayer app after "Allow", and the app finishes the
+  connection by itself ("الـ Dropbox اتوصل ✓"). If the iPhone opens it in
+  Safari instead, the app there shows the code big with a "انسخ الكود"
+  button, to paste into the home-screen app.
+- Needs the app's address added once as a "Redirect URI" in the Dropbox app.
+
 ## v25 — the records go to Dropbox by themselves
 - In the settings, "التسجيلات في الـ Dropbox": connect once (open Dropbox, Allow,
   copy the code it shows, paste it here). From then on every prayer's record
