@@ -20,12 +20,12 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 28;
+const APP_VERSION = 29;
 
-import { buildSteps, alignPrayer, timeline, COST } from "./align.js?v=54";
-import { prayerTimes } from "./prayertimes.js?v=54";
-import { qiblaBearing, facing, turnBy } from "./qibla.js?v=54";
-import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=54";
+import { buildSteps, alignPrayer, timeline, COST } from "./align.js?v=55";
+import { prayerTimes } from "./prayertimes.js?v=55";
+import { qiblaBearing, facing, turnBy } from "./qibla.js?v=55";
+import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=55";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -1276,7 +1276,7 @@ function salamCheck(seen, yaw, t) {
     // the face tool often loses a face turned far away: use the strongest turn just before
     // (only for a while: an old turn must not stay as half a salam)
     const strongest = det.yawHist.reduce((a, [, y]) => (Math.abs(y - sal.base) > Math.abs(a) ? y - sal.base : a), 0);
-    if (Math.abs(strongest) > SALAM_LOST_YAW) side = Math.sign(strongest);
+    if (Math.abs(strongest) > SALAM_LOST_YAW) { side = Math.sign(strongest); rel = strongest; } // (how far it went)
   }
 
   if (side !== sal.side) { sal.side = side; sal.since = t; sal.peak = Math.abs(rel); return; }
@@ -1912,7 +1912,7 @@ function startPrayer(t, away = false, byButton = false) {
   obs.bows = []; obs.raises = []; obs.sits = [];
   Object.assign(stand, { on: away, used: away, visit: null, ruku: null, still: null });
   det.pose = "far"; det.cand = null;
-  sh.home = null;
+  sh.home = null; sh.flat = false;
   if (isAuto()) {
     // the body about to take over (the whole body seen, no face) when the takbeer came: it does now
     // (its upright back is then learned from the first moments of the prayer)

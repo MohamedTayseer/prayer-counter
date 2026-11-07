@@ -4,6 +4,11 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v29 — two small fixes from a second review of v28
+- A salam turn seen only by the face being lost keeps how far it went, so the
+  new endings of v28 can use it too.
+- Every prayer starts trusting the shoulders again.
+
 ## v28 — quick again, and sure before it moves
 - The screen shows each step as soon as it is counted (about 0.3 s after the
   move; v23-v27 waited a full second, which made it feel slow). Only a doubtful
