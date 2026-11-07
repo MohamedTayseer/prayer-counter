@@ -52,6 +52,11 @@ window.timesTests = async () => {
   out.before3am = at(local(2026, 11, 2, 1, 0), [H("isha", local(2026, 11, 2, 0, 30))]);
   // no place yet: no times, it asks for the place
   out.noPlace = `${at(T.dhuhr, [], null)} || ${note()} || button: ${document.getElementById("whereBtn").textContent}`;
+  // (v28, 7 Nov) Isha prayed right after Maghrib, before its own adhan: Isha shows ✓ before its adhan, and
+  // is not "next"; after Isha's adhan, Fajr is still tomorrow's (not ✓)
+  const both = ["fajr", "dhuhr", "asr"].map((k) => H(k, T[k] + 15 * 60000)).concat([H("maghrib", T.maghrib + 4 * 60000), H("isha", T.maghrib + 6 * 60000)]);
+  out.ishaPrayedEarly = at(T.maghrib + 10 * 60000, both);
+  out.ishaPrayedEarlyLater = at(T.isha + 30 * 60000, both).split(" | ").filter((x) => /^(fajr|isha)/.test(x)).join(" | ");
 
   // from the website, its month kept: its times are shown (here 3 min later than the app's, to see it)
   const realFetch = window.fetch;

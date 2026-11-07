@@ -49,6 +49,10 @@ export const COST = {
   sitElsewhere: 1,    // ...anywhere else it fits less well
   noTakbeer: 2.3,     // ...a ruku done after sitting down follows a takbeer the camera can see: with none seen,
                       // the first bow after sitting down is more likely the 1st sujood (the ruku was standing)
+  noRaiseRuku: 3.6,   // (v28) he raises both hands before every ruku (34 of 34 on 6-7 Nov, about 1 s before
+  takbeerMs: 4000,    // it): once each ruku of this prayer so far came so, a "ruku" that follows the sujood
+                      // within readingMin with no raise in the 4 s before it is an extra bow (4 Nov: a lean
+                      // 1.9 s after a sujood was shown as the next ruku for 15 s)
 };
 
 // The pause just before bow slot j (slot 3n = after the last bow, the last tashahhud).
@@ -88,8 +92,9 @@ function pauseCost(type, from, to, raises, open, qunut, sits = [], sitWanted = f
 // sits: times the person sat down on the chair ("first rak'ah standing" only: mixed = true).
 // standing: how many rak'ahs (from the first) are prayed standing with the phone seeing it (0 sitting,
 // n standing, 1 for "first rak'ah standing" with the phone seeing the person standing).
-// handsOn: the hand tool is working (a takbeer would have been seen).
-export function alignPrayer({ n, bows, raises = [], sits = [], mixed = false, standing = 0, handsOn = true, t0, now }) {
+// handsOn: the hand tool is working (a takbeer would have been seen). rukuRaises: in this prayer every ruku so
+// far came right after a raise (see noRaiseRuku).
+export function alignPrayer({ n, bows, raises = [], sits = [], mixed = false, standing = 0, handsOn = true, rukuRaises = false, t0, now }) {
   const B = bows.filter((b) => !b.ignored);
   const m = B.length, S = 3 * n;
   const cost = Array.from({ length: m }, () => new Array(S).fill(Infinity));
@@ -103,7 +108,12 @@ export function alignPrayer({ n, bows, raises = [], sits = [], mixed = false, st
   const misses = (j1, j2) => missUpTo[j2] - missUpTo[j1];
   // the pause just before slot j: its cost (sitting down is expected before rak'ah 1's ruku, slot 0,
   // or before its 1st sujood, slot 1)
-  const pause = (j, from, to, open) => pauseCost(pauseType(j, n), from, to, raises, open, isQunut(j, n), sits, mixed && j <= 1);
+  // (see noRaiseRuku) a bow so soon after the last one, with no raise before it, where a reading has to
+  // come between them (it is a ruku, or a ruku would have been missed before it)
+  const noRead = (from, to) => (handsOn && rukuRaises && to - from < COST.readingMin
+    && !raises.some((r) => r.t >= to - COST.takbeerMs && r.t <= to + 300) ? COST.noRaiseRuku : 0);
+  const pause = (j, from, to, open) => pauseCost(pauseType(j, n), from, to, raises, open, isQunut(j, n), sits, mixed && j <= 1)
+    + (j % 3 === 0 && j < S && !open ? noRead(from, to) : 0);
   // a stretch where bows were missed (slots j1..j2-1 not seen): if it spans the place where the
   // person sits down (before rak'ah 1's ruku or 1st sujood), a sitting down inside it still fits
   const skipped = (j1, j2, from, to) => {
@@ -131,7 +141,7 @@ export function alignPrayer({ n, bows, raises = [], sits = [], mixed = false, st
           if (cost[a2][j2] === Infinity) continue;
           let c = cost[a2][j2] + ex + misses(j2 + 1, j);
           if (j === j2 + 1) c += pause(j, B[a2].e ?? B[a2].s, B[a].s, false);
-          else c += skipped(j2 + 1, j, B[a2].e ?? B[a2].s, B[a].s);
+          else c += skipped(j2 + 1, j, B[a2].e ?? B[a2].s, B[a].s) + (Math.floor(j / 3) > Math.floor(j2 / 3) ? noRead(B[a2].e ?? B[a2].s, B[a].s) : 0);
           if (c < best) { best = c; from = [a2, j2]; }
         }
       }

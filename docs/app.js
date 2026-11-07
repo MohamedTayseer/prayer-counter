@@ -20,12 +20,12 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 27;
+const APP_VERSION = 28;
 
-import { buildSteps, alignPrayer, timeline } from "./align.js?v=53";
-import { prayerTimes } from "./prayertimes.js?v=53";
-import { qiblaBearing, facing, turnBy } from "./qibla.js?v=53";
-import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=53";
+import { buildSteps, alignPrayer, timeline, COST } from "./align.js?v=54";
+import { prayerTimes } from "./prayertimes.js?v=54";
+import { qiblaBearing, facing, turnBy } from "./qibla.js?v=54";
+import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=54";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -86,10 +86,21 @@ const SALAM_HOLD2_MS = 100;  // the second turn (2 Nov: his was over in a few fr
 const SALAM_ARM_MS = 5000;   // salam is only watched 5 s into the last tashahhud (5 Nov: a glance while
                              // sitting up from the last sujood was taken for its first turn; his salam
                              // comes 11 s or more into it)
+// The salam begins to the right. To the phone's front camera that is a "-" turn: so was the first turn seen
+// in 23 of the 24 salams recorded (in the 24th the right turn was not seen at all). When one of his two
+// turns is not seen (6-7 Nov), the other one is enough:
+const SALAM_RIGHT = -1;
+const SALAM_LONG_MS = 600;   // a full salam turn lasts this long and goes this far (his: 0.8-2 s, 0.3-0.9;
+const SALAM_FULL = 0.28;     // looking to the side in the last sitting: 0.1-0.4 s, or about 0.2)
+const SALAM_LOST2_MS = 250;  // after the first turn, the face lost this long (back from that turn) = the second
+                             // (6 Nov, Asr: the face tool lost the face turned left; the turn never showed)
+const SALAM_ONE_MS = 2000;   // after a full right turn, facing the phone again this long = the left one was missed
 const HANDS_ARM_MS = 3000;   // raised hands are only watched 3 s into the middle tashahhud
 const HANDS_HOLD_MS = 250;   // hands must stay up this long
 const RUKU_SOON_MS = 6000;   // after the takbeer before ruku, a smaller bow counts for this long
 const RUKU_SOON_SCORE = 0.6; // ...this much of a full lean is enough then
+const RUKU_SOON_AFTER_MS = 1500; // (a raise this soon after the reading began is the takbeer that began it -
+                             // standing up for rak'ah 3 - not the one before ruku: 6 Nov, Asr)
 const MIN_BOW_MS = 1000;     // a bow shorter than this is a twitch, not a ruku or sujood
 // A takbeer makes the face look like a bow (5 Nov: the face 10-30% bigger and a little lower, the
 // hands beside it) while the shoulders stay put; in a real ruku or sujood they go well down. So while
@@ -101,8 +112,11 @@ const TAKBEER_SH = 0.3;      // ...the shoulders this far into a lean (a real bo
 const TURNED_AWAY = 0.5;
 const AWAY_TURN_MS = 300;      // ...turned away this long in a bow younger than AWAY_BOW_MAX_MS: not a bow
 const AWAY_BOW_MAX_MS = 3000;
-const VIEW_HOLD_MS = 1000;   // the screen shows a step once it has lasted this long (what is undone
-                             // sooner - a twitch, a short rise - never shows)
+// Be sure, not slow (7 Nov: the 1 s screen hold of v23 made the app feel slow): the screen shows each step
+// at once, and a doubtful move waits instead. A face that looks bowed while the shoulders, seen, stay
+// upright is doubtful (a takbeer's face, a hand at the face): it counts only after this long. When the
+// shoulders go down with the face - every real ruku and sujood of 6-7 Nov - it counts at once.
+const NEAR_DOUBT_MS = 1000;
 const MIN_RISE_MS = 800;     // a rise shorter than this between two bows is a twitch too (a real one measures 1 s+)
 const FRAME_MS = 66;         // look at the camera about 15 times a second
 // "first rak'ah standing" (phone set for sitting)
@@ -229,9 +243,11 @@ const obs = { bows: [], raises: [], sits: [] };
 const stand = { on: false, used: false, visit: null, ruku: null, still: null };
 // Shoulders from the body tool: sy = their middle height, sw = the width between them (both as
 // shares of the picture height), home = the same while upright, score = how far into a lean.
-const sh = { seen: false, sy: 0, sw: 0, home: null, score: 0, lastSeen: 0 };
+// flat: in this prayer a real bow went by while the shoulders, seen, never went down - they cannot tell a
+// bow here (19 Oct: the phone placed so they hardly moved), so they do not overrule the face (v28)
+const sh = { seen: false, sy: 0, sw: 0, home: null, score: 0, lastSeen: 0, flat: false };
 // base = the head turn while facing the phone: the middle value of the last 10 s while upright
-const sal = { side: 0, since: 0, first: 0, firstAt: 0, base: 0, yaws: [], yawAt: 0 };
+const sal = { side: 0, since: 0, peak: 0, first: 0, firstAt: 0, firstLen: 0, firstPeak: 0, base: 0, yaws: [], yawAt: 0 };
 // up = a raise is going on (both hands up); a new raise needs the hands to come down first.
 // rukuSoon = the takbeer before ruku was seen in this reading step.
 const hands = { since: 0, up: false, downSince: 0, rukuSoon: null, lastUpAt: 0 }; // lastUpAt: hands (or arms) last seen up
@@ -252,8 +268,8 @@ function resetTracking() {
   });
   obs.bows = []; obs.raises = []; obs.sits = [];
   Object.assign(stand, { on: false, used: false, visit: null, ruku: null, still: null });
-  Object.assign(sh, { seen: false, sy: 0, sw: 0, home: null, score: 0, lastSeen: 0 });
-  Object.assign(sal, { side: 0, since: 0, first: 0, firstAt: 0, base: 0, yaws: [], yawAt: 0 });
+  Object.assign(sh, { seen: false, sy: 0, sw: 0, home: null, score: 0, lastSeen: 0, flat: false });
+  Object.assign(sal, { side: 0, since: 0, peak: 0, first: 0, firstAt: 0, firstLen: 0, firstPeak: 0, base: 0, yaws: [], yawAt: 0 });
   Object.assign(hands, { since: 0, up: false, downSince: 0, rukuSoon: null, lastUpAt: 0 });
   Object.assign(body, { use: null, ref: null, calib: [], calibStart: 0, calibMiss: 0, seen: false, lastSeen: 0, yawAt: 0, lean: 0, peak: 0, leans: [], last: null });
   Object.assign(autoEye, { cand: null, since: 0, faceAt: 0 });
@@ -290,6 +306,10 @@ function backUpright(bow) {
 function takbeerFace(t) {
   return sh.seen && sh.home != null && sh.score < TAKBEER_SH && hands.lastUpAt > 0 && t - hands.lastUpAt < TAKBEER_FACE_MS;
 }
+// The shoulders are seen and have not gone down: in every real ruku and sujood they do (see NEAR_DOUBT_MS).
+const shUpright = () => !sh.flat && sh.seen && sh.home != null && sh.score < TAKBEER_SH;
+// How long a bow must be seen before it counts (see NEAR_DOUBT_MS).
+const nearHold = () => (det.nearBy === "face" && shUpright() ? NEAR_DOUBT_MS : NEAR_HOLD_MS);
 // The head is turned far from the person's own "facing the phone" turn (see TURNED_AWAY).
 // (not while just back from standing, and not for a turn reading the face tool cannot give - a face
 // seen from above, standing over the phone, reads -3 to -7: 19 Oct, Isha)
@@ -311,10 +331,12 @@ function trackShoulders(s, t) {
   sh.lastSeen = t;
   sh.score = sh.home ? shoulderScore() : 0;
 }
-// While upright, the shoulders' upright place follows them slowly (like the face's).
-function followShoulders() {
+// While upright, the shoulders' upright place follows them slowly (like the face's). It is not first
+// learned with the hands up, or just down: raised arms lift the shoulders (7 Nov: learned during the
+// opening takbeer, they read 0.6 "bowed" for the whole first reading).
+function followShoulders(t) {
   if (!sh.seen) return;
-  if (!sh.home) { if (det.score < 0.3 && !stand.visit) sh.home = { sy: sh.sy, sw: sh.sw }; return; }
+  if (!sh.home) { if (det.score < 0.3 && !stand.visit && !(hands.lastUpAt > 0 && t - hands.lastUpAt < 700)) sh.home = { sy: sh.sy, sw: sh.sw }; return; }
   if (sh.score < 0.3 && det.score < 0.3) sh.home = { sy: sh.home.sy * 0.95 + sh.sy * 0.05, sw: sh.home.sw * 0.95 + sh.sw * 0.05 };
 }
 
@@ -548,7 +570,7 @@ function bowStep(w, t) {
   const need = soon ? RUKU_SOON_SCORE : 1;
   const shOn = sh.seen && sh.home != null; // the shoulders can be compared with upright
   // the shoulders went into this bow too, so they can tell when it is over
-  if (det.pose === "near" && bow && bow.e == null && shOn) bow.shPeak = Math.max(bow.shPeak || 0, sh.score);
+  if (det.pose === "near" && bow && bow.e == null && shOn) { bow.shPeak = Math.max(bow.shPeak || 0, sh.score); bow.shSeen = true; }
   const shShowed = (bow?.shPeak || 0) >= 1;
   let want = det.pose;
   if (w != null) {
@@ -567,7 +589,7 @@ function bowStep(w, t) {
       det.valley = size < det.valley ? size : det.valley + (size - det.valley) * 0.002;
       det.upY = det.upY == null ? det.pos.cy : Math.min(det.upY, det.pos.cy);
       if (det.score < 0.3 && det.home) det.home = { cx: det.home.cx * 0.95 + det.pos.cx * 0.05, cy: det.home.cy * 0.95 + det.pos.cy * 0.05, h: det.home.h * 0.95 + det.pos.h * 0.05 };
-      followShoulders();
+      followShoulders(t);
       // automatic: the face cut off by the top edge for a moment while standing up fits (the first
       // rak'ah, or just after "sitting down") = stood up (sitting up straighter does not do that)
       if (isAuto() && !visit && mayStandUp()) {
@@ -625,7 +647,9 @@ function bowStep(w, t) {
       // that bow: only once the face has been seen again.
       const atBottom = det.pos && det.pos.cy + det.pos.h / 2 > 0.92;
       const faceSinceUp = det.farBy !== "shoulders" || det.lastSeen >= det.farAt;
-      if (faceSinceUp && (det.score >= 0.5 || atBottom) && !takbeerFace(t) && !turnedAway()) { want = "near"; det.nearBy = "face"; } // (hands over the face in a takbeer, or looking away: not a bow)
+      // (hands over the face in a takbeer, or looking away: not a bow; nor while the shoulders stay
+      // upright - 7 Nov, Isha: a hand at the face hid it for 3.7 s and that was taken for the ruku)
+      if (faceSinceUp && (det.score >= 0.5 || atBottom) && !takbeerFace(t) && !turnedAway() && !shUpright()) { want = "near"; det.nearBy = "face"; }
       else if (shOn && sh.score >= SH_NEAR_LOST) { want = "near"; det.nearBy = "shoulders"; }
     }
   } else if (det.pose === "near") {
@@ -647,9 +671,12 @@ function bowStep(w, t) {
     }
   }
 
+  // (v28) a frame or two without the face does not cancel a move going on (the face tool misses frames;
+  // missing every other one, a ruku was counted only at its very end, too short, and lost)
+  if (w == null && det.cand && want === det.pose && t - det.lastSeen <= 300) return;
   if (want !== det.pose) {
     if (det.cand !== want) { det.cand = want; det.candSince = t; }
-    else if (t - det.candSince >= (want === "near" ? NEAR_HOLD_MS : FAR_HOLD_MS)) {
+    else if (t - det.candSince >= (want === "near" ? nearHold() : FAR_HOLD_MS)) {
       const moveStart = det.candSince;
       det.pose = want; det.cand = null;
       if (want === "near") {
@@ -692,6 +719,8 @@ function bowStep(w, t) {
           det.refresh = !det.seen && det.farBy === "shoulders";
           if (sh.seen) sh.home = { sy: sh.sy, sw: sh.sw };
           if (open && open.e == null) open.e = moveStart;
+          // a real bow (long enough) that the shoulders, seen all along, did not follow: they cannot tell here
+          if (open && !open.virtual && open.shSeen && (open.shPeak || 0) < TAKBEER_SH && moveStart - open.s >= MIN_BOW_MS && !sh.flat) { sh.flat = true; rec.event(t, "shoulders flat"); }
           rec.event(t, det.farBy === "shoulders" ? "far (shoulders)" : det.farBy === "back" ? "far (back up)" : "far");
         }
       }
@@ -1027,9 +1056,13 @@ function realign(t, final = false) {
   const auto = isAuto();
   const mixed = settings.posture === "mixed" || (auto && !body.use && (stand.used || obs.sits.length > 0));
   const standing = settings.posture === "stand" || (auto && body.use) ? app.n : mixed && !stand.used ? 1 : 0;
+  // (v28) has every ruku of this prayer so far come after a raise (two at least)? Then a "ruku" without
+  // one is doubtful (align.js noRaiseRuku). In October the raises were often not seen: then nothing changes.
+  const rk = app.match ? app.match.pairs.filter((p) => p.j % 3 === 0).map((p) => app.match.bows[p.a]) : [];
+  const rukuRaises = rk.length >= 2 && rk.every((b) => b.virtual || obs.raises.some((r) => r.t >= b.s - COST.takbeerMs && r.t <= b.s + 300));
   const res = alignPrayer({
     n: app.n, bows: obs.bows.filter((b) => !b.short), raises: obs.raises, sits: obs.sits, mixed, standing, // (not a twitch waiting to be joined)
-    handsOn: SIM || diag.hands === "ready", t0: app.t0, now: t,
+    handsOn: SIM || diag.hands === "ready", rukuRaises, t0: app.t0, now: t,
   });
   const tl = timeline({ steps: app.steps, pairs: res.pairs, bows: res.bows, raises: obs.raises, t0: app.t0, now: t, armMs: HANDS_ARM_MS });
   const moved = tl.ptr !== app.ptr;
@@ -1039,13 +1072,13 @@ function realign(t, final = false) {
   const cur = app.steps[app.ptr];
   if (moved) {
     rec.event(t, `step ${app.ptr}`);
-    if (cur.last) Object.assign(sal, { side: 0, since: t, first: 0, firstAt: 0 });
+    if (cur.last) Object.assign(sal, { side: 0, since: t, peak: 0, first: 0, firstAt: 0, firstLen: 0, firstPeak: 0 });
   }
   if (final) return; // the last look when the prayer ends: no sound, nothing to draw
   if (cur.tone && !app.cued.has(app.ptr)) { app.cued.add(app.ptr); cue(cur.tone); }
   // after the takbeer before ruku a ruku is expected: a smaller bow is enough for a few seconds
   const lastRaise = obs.raises[obs.raises.length - 1];
-  hands.rukuSoon = cur.label.startsWith("القراءة") && lastRaise && lastRaise.t >= app.starts[app.ptr]
+  hands.rukuSoon = cur.label.startsWith("القراءة") && lastRaise && lastRaise.t >= app.starts[app.ptr] + RUKU_SOON_AFTER_MS
     ? { at: lastRaise.t, ptr: app.ptr } : null;
   renderLive(moved);
 }
@@ -1088,7 +1121,8 @@ const rec = {
     const fw = det.seen ? Math.round(det.ema * 1000) : -1;
     const st = stand.on ? 1 : stand.visit ? 2 : 0;
     const fh = det.seen && det.raw ? Math.round(det.raw.h * 1000) : -1;
-    this.samples.push(`${this.rel(t)}:${size},${Math.round(det.score * 100)},${cy},${Math.round(det.lastYaw * 100)},${det.pose === "near" ? 1 : 0},${shs},${hc},${bl},${arms},${fw},${st},${fh},${hands.lastUpAt === t ? 1 : 0}`); // (last: hands or arms raised now, v24)
+    const cx = det.seen && det.pos ? Math.round(det.pos.cx * 100) : -1; // (v28: where the face is across the picture)
+    this.samples.push(`${this.rel(t)}:${size},${Math.round(det.score * 100)},${cy},${Math.round(det.lastYaw * 100)},${det.pose === "near" ? 1 : 0},${shs},${hc},${bl},${arms},${fw},${st},${fh},${hands.lastUpAt === t ? 1 : 0},${cx}`); // (13th: hands or arms raised now, v24)
   },
   event(t, what) { if (this.t0) this.events.push(`${this.rel(t)}:${what}`); },
 };
@@ -1222,28 +1256,42 @@ function salamCheck(seen, yaw, t) {
   if (!cur.last || t - app.starts[app.ptr] < SALAM_ARM_MS) return;
   const pending = sal.first && t - sal.firstAt < SALAM_GAP_MS; // the first turn was just seen
   const need = (s) => (pending && s === -sal.first ? SALAM_YAW2 : SALAM_YAW);
-  let side = 0;
+  let side = 0, rel = 0;
+  const lostFor = t - (body.use ? body.yawAt : det.lastSeen);
+  // (v28, watched by the face: these three come from how the face tool sees his salam) a full right turn
+  // seen and the head back from it: the face lost now is the second turn, turned too far for the face
+  // tool (6 Nov, Asr: the turn to the left never showed, only the face gone 0.4 s)
+  const byFace = !body.use;
+  const fullRight = sal.first === SALAM_RIGHT && sal.firstLen >= SALAM_LONG_MS && sal.firstPeak >= SALAM_FULL;
+  if (byFace && !seen && pending && fullRight && sal.side === 0 && lostFor >= SALAM_LOST2_MS) return finish(t, "salam");
   if (seen) {
-    const rel = yaw - sal.base;
+    rel = yaw - sal.base;
     if (sal.side && Math.sign(rel) === sal.side && Math.abs(rel) > need(sal.side) * SALAM_KEEP) side = sal.side;
     else side = rel > need(1) ? 1 : rel < -need(-1) ? -1 : 0;
-  } else if (t - (body.use ? body.yawAt : det.lastSeen) <= 300) {
+  } else if (lostFor <= 300) {
     // the face lost for a moment (the face tool often drops a turned face for a frame or two): the
     // turn going on goes on (v20, 2 Nov: a quick second turn was cut by such gaps and never counted)
     side = sal.side;
-  } else if (t - (body.use ? body.yawAt : det.lastSeen) < 2000) {
+  } else if (lostFor < 2000) {
     // the face tool often loses a face turned far away: use the strongest turn just before
     // (only for a while: an old turn must not stay as half a salam)
     const strongest = det.yawHist.reduce((a, [, y]) => (Math.abs(y - sal.base) > Math.abs(a) ? y - sal.base : a), 0);
     if (Math.abs(strongest) > SALAM_LOST_YAW) side = Math.sign(strongest);
   }
 
-  if (side !== sal.side) { sal.side = side; sal.since = t; return; }
+  if (side !== sal.side) { sal.side = side; sal.since = t; sal.peak = Math.abs(rel); return; }
+  if (side) sal.peak = Math.max(sal.peak, Math.abs(rel)); // (how far this turn has gone)
+  // (v28) a full right turn, then facing the phone again this long: the left turn was not seen
+  if (byFace && side === 0 && pending && fullRight && t - sal.since >= SALAM_ONE_MS) return finish(t, "salam");
   const second = pending && side === -sal.first; // (quick and small: held half as long)
   if (side === 0 || t - sal.since < (second ? SALAM_HOLD2_MS : SALAM_HOLD_MS)) return;
   if (second) return finish(t, "salam");
-  if (sal.first !== side) rec.event(t, `salam turn ${side > 0 ? "+" : "-"}`);
+  // (v28) a full turn to the left with no right turn just before it: the right one was missed (7 Nov,
+  // Dhuhr: the face grew as in a right turn, but the turn never showed) - this was the last turn
+  if (byFace && side === -SALAM_RIGHT && t - sal.since >= SALAM_LONG_MS && sal.peak >= SALAM_FULL) return finish(t, "salam");
+  if (sal.first !== side || !pending) { rec.event(t, `salam turn ${side > 0 ? "+" : "-"}`); sal.firstLen = 0; sal.firstPeak = 0; }
   sal.first = side; sal.firstAt = t;
+  sal.firstLen = Math.max(sal.firstLen, t - sal.since); sal.firstPeak = Math.max(sal.firstPeak, sal.peak);
 }
 
 // ---------- sound: spoken words (built into the phone, no internet) or a tone ----------
@@ -1853,7 +1901,7 @@ function startPrayer(t, away = false, byButton = false) {
   app.n = p.n;
   app.steps = buildSteps(p.n);
   app.ptr = 0;
-  app.viewPtr = 0; app.pendPtr = null; // (the step on the screen, see renderLive)
+  app.viewPtr = 0; // (the step on the screen, see renderLive)
   app.starts = [t];
   app.t0 = t;
   app.end = 0;
@@ -2008,7 +2056,8 @@ function traceText(r) {
   const fields = ["t:size,score,y,turn,bowed", "t:size,score,y,turn,bowed,shoulders", "t:size,score,y,turn,bowed,shoulders,hands",
     "t:size,score,y,turn,bowed,shoulders,hands,body,arms", "t:size,score,y,turn,bowed,shoulders,hands,body,arms,face,standing",
     "t:size,score,y,turn,bowed,shoulders,hands,body,arms,face,standing,faceh",
-    "t:size,score,y,turn,bowed,shoulders,hands,body,arms,face,standing,faceh,raised"][v >= 24 ? 6 : v >= 15 ? 5 : v >= 13 ? 4 : Math.max(0, Math.min(3, v - 7))];
+    "t:size,score,y,turn,bowed,shoulders,hands,body,arms,face,standing,faceh,raised",
+    "t:size,score,y,turn,bowed,shoulders,hands,body,arms,face,standing,faceh,raised,x"][v >= 28 ? 7 : v >= 24 ? 6 : v >= 15 ? 5 : v >= 13 ? 4 : Math.max(0, Math.min(3, v - 7))];
   return `${head}\nSTEPS ${steps}\nEVENTS ${r.trace.events}${match}\nSAMPLES ${fields} ${r.trace.samples}`;
 }
 
@@ -2058,14 +2107,30 @@ function logHTML(segs, curIdx) {
   }).join("");
 }
 
-// The step the screen shows (see renderLive): follows the counted step once it has stayed VIEW_HOLD_MS.
+// The step the screen shows (see renderLive). v23-v27 showed each step only after it had lasted 1 s, and
+// that made the app feel slow (7 Nov). v28: at once - unless the move into it is still doubtful (see
+// moveDoubtful); then it shows as soon as it is sure, and a move undone before that never shows.
 // Run on every frame and every redraw.
 function updateView(t) {
-  if (app.viewPtr == null) app.viewPtr = app.ptr;
-  if (app.ptr === app.viewPtr) app.pendPtr = null;
-  else if (app.pendPtr !== app.ptr) { app.pendPtr = app.ptr; app.pendSince = t; }
-  else if (t - app.pendSince >= VIEW_HOLD_MS) { app.viewPtr = app.ptr; app.pendPtr = null; }
+  // (a bow cut short a moment ago may still go on - "undo: short rise": its step stays until that is known)
+  const bow = obs.bows[obs.bows.length - 1];
+  const mayGoOn = app.ptr < app.viewPtr && bow?.short && t - bow.e < MIN_RISE_MS;
+  if (app.viewPtr == null || (!mayGoOn && (app.ptr < app.viewPtr || !moveDoubtful(t)))) app.viewPtr = app.ptr;
   return Math.min(app.viewPtr, app.steps.length - 1);
+}
+// Doubtful: a bow younger than MIN_BOW_MS that the shoulders have not shown (not seen, or not gone down,
+// or not to be trusted in this prayer), which may still be a twitch; or a rise younger than MIN_RISE_MS
+// while the shoulders that went down into the bow are still down, which may still be a flicker in the
+// bow. With his phone as on 6-7 Nov the shoulders show the real bows and rises at once: hardly ever a wait.
+function moveDoubtful(t) {
+  const bow = obs.bows[obs.bows.length - 1];
+  if (app.mode !== "pray" || body.use || !bow || bow.virtual) return false;
+  const step = app.steps[app.ptr];
+  if (step.pose === "near" && det.pose === "near" && bow.e == null)
+    return t - bow.s < MIN_BOW_MS && (sh.flat || (bow.shPeak || 0) < TAKBEER_SH);
+  if (step.pose === "far" && det.pose === "far" && bow.e != null && !bow.short)
+    return t - bow.e < MIN_RISE_MS && (bow.shPeak || 0) >= 1 && sh.seen && sh.score > SH_FAR;
+  return false;
 }
 function liveSegs(t, upTo = app.ptr) {
   return app.steps.slice(0, upTo + 1).map((s, i) => ({ g: s.g, label: s.label, start: app.starts[i], end: i === upTo ? t : app.starts[i + 1] ?? t }));
@@ -2075,9 +2140,7 @@ function renderLive(stepChanged) {
   if (app.mode !== "pray") return;
   const t = now();
   const p = PRAYERS[app.key];
-  // The screen shows a step once it has lasted VIEW_HOLD_MS: a bow or a rise the app undoes sooner
-  // (a twitch, a short rise, a takbeer's face) never shows, so the steps never jump back and forth
-  // (5 Nov: "the ruku is read wrong and then it fixes itself"). The counting itself is not delayed.
+  // The step shows at once; only a doubtful move waits until it is sure (moveDoubtful, NEAR_DOUBT_MS).
   const vp = updateView(t);
   const cur = app.steps[vp];
   $("total").textContent = fmt(t - app.t0);
@@ -2248,10 +2311,13 @@ function timesState(t) {
   const rows = {};
   let from = T.from;
   for (const k of Object.keys(PRAYERS)) {
-    let at = T[k];
-    if (k === "fajr" && Number.isFinite(T.isha) && t >= T.isha) { const T2 = dayTimes(nextDay(D), w); at = T2.fajr; if (T2.from !== from) from = "app"; }
+    let at = T[k], tomorrow = false;
+    if (k === "fajr" && Number.isFinite(T.isha) && t >= T.isha) { const T2 = dayTimes(nextDay(D), w); at = T2.fajr; tomorrow = true; if (T2.from !== from) from = "app"; }
     if (!Number.isFinite(at)) { rows[k] = null; continue; }
-    rows[k] = t < at ? { at, state: "soon", left: at - t } : { at, state: done.has(k) ? "done" : "due", since: t - at };
+    // prayed today: done, even before its adhan (7 Nov: an Isha prayed before its adhan kept showing
+    // the time left); not tomorrow's Fajr, shown after Isha
+    rows[k] = done.has(k) && !tomorrow ? { at, state: "done", since: t - at }
+      : t < at ? { at, state: "soon", left: at - t } : { at, state: "due", since: t - at };
   }
   const next = Object.keys(rows).filter((k) => rows[k]?.state === "soon").sort((p, q) => rows[p].at - rows[q].at)[0] || null;
   return { rows, next, from, w };
@@ -2596,6 +2662,7 @@ if (SIM) {
     checkBody: (b, t) => { bodyCheckStep(b, t); return $("calibMsg").textContent; },
     state: () => ({ mode: app.mode, ptr: app.ptr, step: app.steps[app.ptr]?.label, group: app.steps[app.ptr]?.g, pose: det.pose, valley: det.valley, peak: det.peak, view: app.steps[app.viewPtr ?? app.ptr]?.label, viewGroup: app.steps[app.viewPtr ?? app.ptr]?.g, viewPtr: app.viewPtr ?? app.ptr }),
     history: () => load(HIST_KEY, []),
+    clock: () => now(), // (the sim's clock)
     handsRaised: (res, box, video) => handsRaised(res, box, video),
     check: (w, bothUp, handCount, t, pos, shoulders) => { checkStep(w, bothUp, handCount, t, pos, shoulders); return $("calibMsg").textContent; },
     obs: () => obs,

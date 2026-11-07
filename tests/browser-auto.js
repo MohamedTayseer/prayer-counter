@@ -197,6 +197,69 @@ window.autoTests = async () => {
     out.takbeerFaceLikeBow = `${sum()} | undo: ${(ev.match(/undo/g) || []).length}`; done();
   }
 
+  // ---- v28 (6-7 Nov records): the screen shows each step at once - no wait when the shoulders go down
+  // with the face - and the doubtful moves never show: the face hidden by a hand, the face a little
+  // bigger after the takbeer of rak'ah 3, the takbeer's face before the hands are seen, a lean 1.9 s
+  // after a sujood with no raise. Each line also says how often the screen went back a step and how
+  // late (s) it showed the ruku and the sujoods after they began. ----
+  { let back = 0, lastVp = 0; const shownAt = new Map();
+    const fn = (w, ms, o = {}) => {
+      for (let i = 0; i < ms; i += 100) {
+        __pc.feed(w, o.yaw ?? 0, undefined, o.hands ?? false, w == null ? null : { cx: 0.5, cy: o.cy ?? 0.42, h: o.h ?? 0.145 }, o.sh ?? up);
+        const st = __pc.state();
+        if (st.mode !== "pray") continue;
+        if (st.viewPtr < lastVp) back++;
+        if (st.viewPtr !== lastVp && !shownAt.has(st.viewPtr)) shownAt.set(st.viewPtr, __pc.clock());
+        lastVp = st.viewPtr;
+      }
+    };
+    const T = { cy: 0.46, h: 0.16, hands: true }, R = { cy: 0.51, h: 0.185, sh: ruku }, S = { cy: 0.56, h: 0.2, sh: suj };
+    const takbeer = () => { fn(0.25, 300, { cy: 0.46, h: 0.16 }); fn(0.25, 600, T); fn(0.2, 300); };
+    const rak = () => { takbeer(); fn(0.27, 2500, R); fn(0.2, 500); takbeer(); fn(0.28, 2200, S); fn(0.2, 1800); fn(0.28, 2200, S); };
+    const begin = async (key) => { back = 0; lastVp = 0; shownAt.clear(); await go(key); fn(0.2, 3500); fn(0.2, 1500, { hands: true }); };
+    const salam = () => { fn(0.2, 12000); fn(0.2, 1000, { yaw: -0.5 }); fn(0.2, 600); fn(0.2, 1000, { yaw: 0.5 }); };
+    // how late the screen showed each bow (the history keeps when each step began)
+    const lateness = () => {
+      const h = __pc.history()[0];
+      if (!h) return "";
+      const late = h.segs.map((sg, i) => (/الركوع$|السجدة/.test(sg.label) && shownAt.has(i) ? (shownAt.get(i) - sg.start) / 1000 : null)).filter((x) => x != null);
+      return late.length ? `${Math.min(...late).toFixed(1)}-${Math.max(...late).toFixed(1)}` : "-";
+    };
+    const report = () => `${sum()} | back ${back} | shown late ${lateness()} s`;
+    // 1. a Fajr, nothing unusual: every ruku and sujood shows within 0.3 s (v27: 1.2 s)
+    await begin("fajr"); fn(0.2, 10000); rak(); fn(0.2, 10000); rak(); salam();
+    out.promptScreen = report(); done();
+    // 2. (7 Nov, Isha) a hand in front of the face for 3.7 s in the reading, the shoulders upright: no bow
+    await begin("fajr"); fn(0.2, 10000); rak(); fn(0.2, 4000); fn(0.23, 300); fn(null, 3700); fn(0.2, 4000); rak(); salam();
+    out.handHidesFace = report(); done();
+    // 3. (6 Nov, Asr) the takbeer of standing up for rak'ah 3, then the face 13% bigger for 1.1 s with the
+    //    shoulders upright: no bow (that takbeer is not the one before ruku)
+    await begin("dhuhr"); fn(0.2, 10000); rak(); fn(0.2, 10000); rak(); fn(0.2, 10000);
+    takbeer(); fn(0.226, 1100); fn(0.2, 7000); rak(); fn(0.2, 10000); rak(); salam();
+    out.biggerFaceAfterStandUp = report(); done();
+    // 4. (the takbeer's face before the hands are seen) the face grows 0.7 s before the hands show
+    await begin("fajr"); fn(0.2, 10000);
+    for (let r = 0; r < 2; r++) { fn(0.25, 700, { cy: 0.46, h: 0.16 }); fn(0.25, 600, T); fn(0.2, 300); fn(0.27, 2500, R); fn(0.2, 500); takbeer(); fn(0.28, 2200, S); fn(0.2, 1800); fn(0.28, 2200, S); fn(0.2, 10000); }
+    salam(); out.takbeerFaceBeforeHands = report(); done();
+    // 5. (4 Nov, Dhuhr) 1.9 s after the second sujood of rak'ah 3, a lean of 2.7 s with the shoulders going
+    //    down, no raise; then the reading, and the real ruku with its raise: the lean is extra at once,
+    //    the screen never shows it as the ruku of rak'ah 4
+    await begin("dhuhr"); fn(0.2, 10000); rak(); fn(0.2, 10000); rak(); fn(0.2, 10000); takbeer(); fn(0.2, 7000); rak();
+    fn(0.2, 1900); let leanShown = false;
+    for (let i = 0; i < 27; i++) { fn(0.27, 100, R); if (/الركوع/.test(__pc.state().view || "")) leanShown = true; }
+    fn(0.2, 10000); rak(); salam();
+    out.leanAfterSujood = `${report()} | lean shown as a ruku: ${leanShown ? "YES" : "no"}`; done();
+    // 6. (7 Nov) the opening takbeer lifts the shoulders while the hands are up: their upright place
+    //    is learned once the hands are down (v27 learned it lifted: 0.6 "bowed" all through the first
+    //    reading, so nothing could tell the takbeer's face before the first ruku from a ruku)
+    await go("fajr"); back = 0; lastVp = 0; shownAt.clear();
+    fn(0.2, 3500); fn(0.2, 1500, { hands: true, sh: { sy: 0.7, sw: 0.5 } }); fn(0.2, 6000);
+    const restScore = __pc.sh().score;
+    fn(0.2, 4000);
+    for (let r = 0; r < 2; r++) { fn(0.25, 700, { cy: 0.46, h: 0.16 }); fn(0.25, 600, T); fn(0.2, 300); fn(0.27, 2500, R); fn(0.2, 500); takbeer(); fn(0.28, 2200, S); fn(0.2, 1800); fn(0.28, 2200, S); fn(0.2, 10000); }
+    salam(); out.shouldersLiftedAtStart = `${report()} | shoulders upright in the first reading read ${restScore.toFixed(2)}`; done();
+  }
+
   localStorage.clear();
   console.log(out);
   return out;

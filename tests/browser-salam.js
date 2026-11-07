@@ -54,6 +54,30 @@ window.salamTests = async () => {
     dropFeed(1500, -0.45); feed(0.3, 600); dropFeed(400, 0.13); feed(0.3, 5000);
     out[`quickSecondTurnFaceDropping seed ${seed}`] = ended();
   }
+  // 5. (v28, 6 Nov Asr) the right turn, back to the phone, then the face lost for 0.5 s (the turn to the
+  //    left too far for the face tool; the turn itself never shows): the salam, at the face loss
+  rnd = 51;
+  await prayUpToLast(); feed(0.3, 12000);
+  feed(0.3, 1800, { yaw: -0.6 }); feed(0.3, 1000); feed(null, 500); feed(0.3, 6000);
+  out.secondTurnOnlyFaceLost = ended();
+  // 6. (v28, 7 Nov Dhuhr) the right turn not seen at all, then a full left turn: the salam, during it
+  rnd = 53;
+  await prayUpToLast(); feed(0.3, 12000);
+  feed(0.3, 1500, { yaw: 0.45 }); feed(0.3, 6000);
+  out.leftTurnOnly = ended();
+  // 7. (v28) a full right turn, then facing the phone (the left turn not seen): the salam, 2 s later
+  rnd = 55;
+  await prayUpToLast(); feed(0.3, 12000);
+  feed(0.3, 1500, { yaw: -0.55 }); feed(0.3, 6000);
+  out.rightTurnOnly = ended();
+  // 8. (v28) looking a little to the left for 1.5 s, and a quick look far to the left (0.3 s), in the last
+  //    sitting: not a salam; the real salam 8 s later
+  rnd = 57;
+  await prayUpToLast(); feed(0.3, 6000);
+  feed(0.3, 1500, { yaw: 0.08 }); feed(0.3, 4000); feed(0.3, 300, { yaw: 0.5 }); feed(0.3, 8000);
+  const before8 = __pc.state().mode === "pray" ? "still praying" : "ENDED EARLY";
+  feed(0.3, 1500, { yaw: -0.65 }); feed(0.3, 300); feed(0.3, 1000, { yaw: 0.4 }); feed(0.3, 3000);
+  out.leftLooksThenSalam = `${ended()} (just before the real salam: ${before8})`;
   localStorage.clear();
   return out;
 };

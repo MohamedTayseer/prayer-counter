@@ -4,6 +4,25 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v28 — quick again, and sure before it moves
+- The screen shows each step as soon as it is counted (about 0.3 s after the
+  move; v23-v27 waited a full second, which made it feel slow). Only a doubtful
+  move waits, and only until it is sure: a "bow" the shoulders do not show, or
+  a "rise" while the shoulders are still down.
+- No bow from the face alone while the shoulders stay upright: a hand in front
+  of the face (7 Nov, Isha) or the face a little bigger after the takbeer of
+  rak'ah 3 (6 Nov, Asr) are no longer taken for the ruku. When the shoulders
+  turn out not to follow the bows in a prayer, the face counts alone as before.
+- A lean right after a sujood, with no raise before it, is not shown as the
+  next ruku (4 Nov) - once every ruku of that prayer so far came after a raise.
+- A frame or two without the face no longer cuts a ruku short.
+- The salam is seen when one of its two turns is not: the right turn then the
+  face lost (6 Nov, Asr), the left turn alone (7 Nov, Dhuhr), or the right turn
+  alone and then facing the phone for 2 s. Short looks to the side still do not end the prayer.
+- A prayer recorded today shows "✓ صلّيتها" even when it was prayed before its
+  adhan time (it kept showing the time left).
+- The records keep where the face is across the picture too.
+
 ## v27 — all of today's records in one tap
 - Under the prayers on the start screen: "ابعت تسجيلات النهارده (5)". One tap
   opens the share menu with every record of today (the day runs from 3 at

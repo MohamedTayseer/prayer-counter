@@ -13,15 +13,16 @@
 // 4 values a second; the real values between them wobble), opts.seed: start of the random numbers.
 // Records from v13 on keep the face's real width (10th field): then that is used and V0 is not
 // needed; hk is then the face's height over its width in the picture (portrait video: about 0.8).
-// A face seen with no height in the picture (v13 watched by the body) is put at y 0.5.
+// A face seen with no height in the picture (v13 watched by the body) is put at y 0.5. From v28 the
+// records keep where the face is across the picture too (14th field): then that is fed instead of 0.5.
 window.replayRecord = async (S, V0, hk, raises, prayer, posture, opts = {}) => {
   localStorage.clear();
   let rnd = opts.seed || 7; const wobble = () => { rnd = (rnd * 16807) % 2147483647; return ((rnd / 2147483647) - 0.5) * 2 * (opts.yawNoise || 0); };
-  const samples = S.trim().split(" ").map((x) => { const [t, rest] = x.split(":"); const v = rest.split(",").map(Number); return { t: Number(t) * 100, size: v[0], y: v[2], turn: v[3], bowed: v[4], sh: v.length >= 6 ? v[5] : -1, arms: v[8] === 1, face: v.length >= 10 ? v[9] : null, fh: v.length >= 12 ? v[11] : null, raised: v.length >= 13 ? v[12] === 1 : null }; });
+  const samples = S.trim().split(" ").map((x) => { const [t, rest] = x.split(":"); const v = rest.split(",").map(Number); return { t: Number(t) * 100, size: v[0], y: v[2], turn: v[3], bowed: v[4], sh: v.length >= 6 ? v[5] : -1, arms: v[8] === 1, face: v.length >= 10 ? v[9] : null, fh: v.length >= 12 ? v[11] : null, raised: v.length >= 13 ? v[12] === 1 : null, cx: v.length >= 14 && v[13] >= 0 ? v[13] / 100 : 0.5 }; });
   const abs = samples.some((s) => s.face != null && s.face >= 0);
   let V = V0, lastSeenBowed = null; const frames = [];
   samples.forEach((s, i) => {
-    if (abs) { const w = s.face >= 0 ? s.face / 1000 : null; frames.push({ t: s.t, w, cy: s.y >= 0 ? s.y / 100 : 0.5, yaw: s.turn / 100, arms: s.arms, h: s.fh > 0 ? s.fh / 1000 : null, sh: s.sh, raised: s.raised }); return; }
+    if (abs) { const w = s.face >= 0 ? s.face / 1000 : null; frames.push({ t: s.t, w, cy: s.y >= 0 ? s.y / 100 : 0.5, cx: s.cx, yaw: s.turn / 100, arms: s.arms, h: s.fh > 0 ? s.fh / 1000 : null, sh: s.sh, raised: s.raised }); return; }
     if (s.bowed === 0 && i > 0 && samples[i - 1].bowed === 1 && lastSeenBowed) V = lastSeenBowed;
     const w = s.size < 0 ? null : V * s.size / 100;
     if (s.bowed === 1 && w) lastSeenBowed = w;
@@ -63,7 +64,7 @@ window.replayRecord = async (S, V0, hk, raises, prayer, posture, opts = {}) => {
       // cannot show it: one value every 0.3 s); "turned" = 0.15 or more from the usual head turn
       const drop = opts.dropTurned && Math.abs(yaw - yaw0) >= 0.15 && Math.round(t / 100) % 2 === 1;
       const w = drop ? null : f.w;
-      __pc.feed(w, yaw + wobble(), t0 + t, hands, w == null ? null : { cx: 0.5, cy: f.cy, h: f.h ?? f.w * hk }, shouldersFor(f)); // (v15 records keep the real height)
+      __pc.feed(w, yaw + wobble(), t0 + t, hands, w == null ? null : { cx: f.cx ?? 0.5, cy: f.cy, h: f.h ?? f.w * hk }, shouldersFor(f)); // (v15 records keep the real height; v28 the place across)
       const st = __pc.state();
       const label = st.mode === "pray" ? `${st.step} ${st.group}` : st.mode;
       if (label !== lastLabel) { shown.push(`${(t / 1000).toFixed(1)} ${label}`); lastLabel = label; }
