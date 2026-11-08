@@ -4,6 +4,15 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v30 — the camera comes back by itself
+- When the camera stops during a prayer (a phone call, another app), the app
+  plays it again after 1.5 s, then asks for the camera afresh (up to 5 times),
+  and goes on counting from where it was. Before, the screen stayed on the step
+  it was on until the end button.
+- An unexpected error no longer stops the counting; it is written in the record.
+- The record notes when the camera stopped and came back, and when the screen
+  was hidden.
+
 ## v29 — two small fixes from a second review of v28
 - A salam turn seen only by the face being lost keeps how far it went, so the
   new endings of v28 can use it too.

@@ -20,12 +20,12 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 29;
+const APP_VERSION = 30;
 
-import { buildSteps, alignPrayer, timeline, COST } from "./align.js?v=55";
-import { prayerTimes } from "./prayertimes.js?v=55";
-import { qiblaBearing, facing, turnBy } from "./qibla.js?v=55";
-import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=55";
+import { buildSteps, alignPrayer, timeline, COST } from "./align.js?v=56";
+import { prayerTimes } from "./prayertimes.js?v=56";
+import { qiblaBearing, facing, turnBy } from "./qibla.js?v=56";
+import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=56";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -1429,6 +1429,7 @@ async function keepAwake() {
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch { wakeLock = null; }
 }
 document.addEventListener("visibilitychange", () => {
+  if (app.mode === "pray") rec.event(now(), document.hidden ? "screen hidden" : "screen back"); // (v30)
   if (document.visibilityState === "visible" && (app.mode === "pray" || app.mode === "calib" || app.mode === "takbeer")) keepAwake();
 });
 
@@ -1458,6 +1459,13 @@ let tick = 0, lastHandsUp = false, lastHandCount = 0, lastHandRes = null, lastSh
 let stream = null;
 let loopOn = false;
 let lastVideoTime = -1;
+// (v30) The camera can stop under the prayer (8 Nov: a phone call; the screen stayed on the step it
+// was on). With no new picture for a moment the app plays the video again, then asks for the camera
+// afresh, and goes on where it was. What happened goes into the record.
+const CAM_STALL_MS = 1500;   // no new picture this long = the camera stopped
+const CAM_RETRY_MS = 1500;   // then: ask for the camera afresh this long after each try
+const CAM_TRIES = 5;         // (at most, each time it stops)
+const cam = { lastFrameAt: 0, stalledAt: 0, tries: 0, restarting: false, gen: 0, errors: new Set() };
 
 const withTimeout = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error("timeout")), ms))]);
 
@@ -1499,14 +1507,17 @@ async function loadPose(files) {
   }
 }
 
+const CAMERA = { video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false };
 async function startCamera() {
+  cam.gen++; cam.lastFrameAt = 0; cam.stalledAt = 0; cam.tries = 0; cam.restarting = false; cam.errors.clear();
   const msg = $("calibMsg");
   if (!navigator.mediaDevices?.getUserMedia) {
     msg.textContent = "الموبايل مش سامح بالكاميرا هنا. لازم تفتح الصفحة من رابط https.";
     return false;
   }
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+    stream = await navigator.mediaDevices.getUserMedia(CAMERA);
+    watchTrack(stream);
   } catch {
     msg.textContent = "الكاميرا اتقفلت. اسمح للصفحة تستخدم الكاميرا من إعدادات المتصفح وجرب تاني.";
     return false;
@@ -1549,6 +1560,7 @@ async function startCamera() {
 
 function stopCamera() {
   loopOn = false;
+  cam.gen++;
   if (stream) stream.getTracks().forEach((tr) => tr.stop());
   stream = null;
   const video = $("video");
@@ -1556,13 +1568,27 @@ function stopCamera() {
   document.querySelector(".cam-wrap").prepend(video); // back to the big preview for next time
 }
 
+// One look a frame. An error in it is written down and the next look still comes (v30: before,
+// one error would have stopped the looking for the rest of the prayer).
 function frame() {
   if (!loopOn) return;
+  try { look(); } catch (e) { loopError(e); }
+  setTimeout(frame, FRAME_MS); // a plain timer: animation frames can be held back by the browser
+}
+function loopError(e) {
+  const m = String(e?.message || e).slice(0, 100);
+  diag.err = m;
+  if (!cam.errors.has(m) && cam.errors.size < 5) { cam.errors.add(m); rec.event(now(), `error: ${m}`); }
+}
+
+function look() {
   const video = $("video");
-  if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+  if (!(video.readyState >= 2 && video.currentTime !== lastVideoTime)) { camWatch(Date.now(), video); return; }
+  {
     lastVideoTime = video.currentTime;
     let w = null, yaw = 0, box = null, handsUp = false, pos = null;
     const t = Date.now();
+    camSeen(t);
     try {
       const res = detector.detectForVideo(video, performance.now());
       diag.frames++;
@@ -1615,7 +1641,50 @@ function frame() {
     onObservation(w, yaw, t, handsUp, pos, lastShoulders, lastBody);
     if (app.mode === "pray") renderMeter();
   }
-  setTimeout(frame, FRAME_MS); // a plain timer: animation frames can be held back by the browser
+}
+
+// A new picture came: if the camera had stopped, it is back.
+function camSeen(t) {
+  if (cam.stalledAt) rec.event(t, `camera back after ${((t - cam.lastFrameAt) / 1000).toFixed(1)}s`);
+  cam.lastFrameAt = t; cam.stalledAt = 0; cam.tries = 0;
+}
+// No new picture: during the prayer (and while waiting for its start), on the screen, after a moment
+// play the video again; then ask for the camera afresh (a call or another app can take it).
+function camWatch(t, video) {
+  if (!cam.lastFrameAt || document.hidden || cam.restarting) return;
+  if (app.mode !== "pray" && app.mode !== "takbeer") return;
+  if (t - cam.lastFrameAt < CAM_STALL_MS) return;
+  if (!cam.stalledAt) {
+    cam.stalledAt = t;
+    const tr = stream?.getVideoTracks?.()[0];
+    rec.event(t, `camera stopped (${tr ? tr.readyState + (tr.muted ? ", muted" : "") : "no camera"}${video.paused ? ", paused" : ""})`);
+    video.play().catch(() => {});
+  } else if (t - cam.stalledAt >= CAM_RETRY_MS && cam.tries < CAM_TRIES) restartCamera();
+}
+async function restartCamera() {
+  const gen = cam.gen;
+  cam.restarting = true; cam.tries++;
+  try {
+    if (stream) stream.getTracks().forEach((tr) => tr.stop()); // (the phone gives the camera to one at a time)
+    const s = await navigator.mediaDevices.getUserMedia(CAMERA);
+    if (gen !== cam.gen || !loopOn) { s.getTracks().forEach((tr) => tr.stop()); return; } // (the prayer ended meanwhile)
+    stream = s; watchTrack(s);
+    const video = $("video");
+    video.srcObject = s;
+    await video.play().catch(() => {});
+    rec.event(now(), "camera asked again");
+  } catch (e) {
+    if (gen === cam.gen) rec.event(now(), `camera not given: ${String(e?.name || e).slice(0, 40)}`);
+  } finally {
+    cam.restarting = false;
+    if (gen === cam.gen && cam.stalledAt) cam.stalledAt = now();
+  }
+}
+// The phone's own word on the camera, into the record.
+function watchTrack(s) {
+  const tr = s?.getVideoTracks?.()[0];
+  if (!tr) return;
+  for (const k of ["mute", "unmute", "ended"]) tr.addEventListener(k, () => { if (app.mode === "pray" && stream === s) rec.event(now(), `camera ${k}`); });
 }
 
 // A raise = BOTH hands up beside the face, as for a takbeer: one hand on each side of the face,
@@ -2663,6 +2732,12 @@ if (SIM) {
     state: () => ({ mode: app.mode, ptr: app.ptr, step: app.steps[app.ptr]?.label, group: app.steps[app.ptr]?.g, pose: det.pose, valley: det.valley, peak: det.peak, view: app.steps[app.viewPtr ?? app.ptr]?.label, viewGroup: app.steps[app.viewPtr ?? app.ptr]?.g, viewPtr: app.viewPtr ?? app.ptr }),
     history: () => load(HIST_KEY, []),
     clock: () => now(), // (the sim's clock)
+    // (v30) the camera watch: a real camera (a fake one in the tests) without the looking loop
+    camera: {
+      cam: () => cam, watch: (t) => camWatch(t, $("video")), seen: (t) => camSeen(t), stream: () => stream,
+      start: async () => { stream = await navigator.mediaDevices.getUserMedia(CAMERA); watchTrack(stream); $("video").srcObject = stream; loopOn = true; cam.gen++; },
+      stop: () => stopCamera(), events: () => rec.events.slice(),
+    },
     handsRaised: (res, box, video) => handsRaised(res, box, video),
     check: (w, bothUp, handCount, t, pos, shoulders) => { checkStep(w, bothUp, handCount, t, pos, shoulders); return $("calibMsg").textContent; },
     obs: () => obs,
