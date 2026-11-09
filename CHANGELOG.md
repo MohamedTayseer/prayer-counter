@@ -4,6 +4,16 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v31 — the start not missed, and a quick rise kept
+- If the takbeer at the start is not seen, the prayer still starts: while
+  waiting, a ruku and then a sujood mean the prayer has begun, and both are
+  counted. Before, the counting began a rak'ah late and stayed behind to the end.
+- Coming up from a bow with both hands raised is a real rise, even when the
+  face still looks close and the next bow follows quickly. Before, the ruku and
+  the sujood after it could be joined into one bow.
+- The record notes how long the app waited for the takbeer, and when the hand
+  and body tools became ready.
+
 ## v30 — the camera comes back by itself
 - When the camera stops during a prayer (a phone call, another app), the app
   plays it again after 1.5 s, then asks for the camera afresh (up to 5 times),

@@ -20,12 +20,12 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 30;
+const APP_VERSION = 31;
 
-import { buildSteps, alignPrayer, timeline, COST } from "./align.js?v=56";
-import { prayerTimes } from "./prayertimes.js?v=56";
-import { qiblaBearing, facing, turnBy } from "./qibla.js?v=56";
-import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=56";
+import { buildSteps, alignPrayer, timeline, COST } from "./align.js?v=57";
+import { prayerTimes } from "./prayertimes.js?v=57";
+import { qiblaBearing, facing, turnBy } from "./qibla.js?v=57";
+import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=57";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -250,7 +250,7 @@ const sh = { seen: false, sy: 0, sw: 0, home: null, score: 0, lastSeen: 0, flat:
 const sal = { side: 0, since: 0, peak: 0, first: 0, firstAt: 0, firstLen: 0, firstPeak: 0, base: 0, yaws: [], yawAt: 0 };
 // up = a raise is going on (both hands up); a new raise needs the hands to come down first.
 // rukuSoon = the takbeer before ruku was seen in this reading step.
-const hands = { since: 0, up: false, downSince: 0, rukuSoon: null, lastUpAt: 0 }; // lastUpAt: hands (or arms) last seen up
+const hands = { since: 0, up: false, downSince: 0, rukuSoon: null, lastUpAt: 0, upFrom: 0 }; // lastUpAt: hands (or arms) last seen up
 // Standing prayer by the body tool. use = the body is the main eye for this prayer (null = not
 // decided yet); ref = the direction of the back while standing (3D, from the hips to the
 // shoulders); lean = how far the back is bent from it now (degrees); last = the body last seen.
@@ -270,10 +270,11 @@ function resetTracking() {
   Object.assign(stand, { on: false, used: false, visit: null, ruku: null, still: null });
   Object.assign(sh, { seen: false, sy: 0, sw: 0, home: null, score: 0, lastSeen: 0, flat: false });
   Object.assign(sal, { side: 0, since: 0, peak: 0, first: 0, firstAt: 0, firstLen: 0, firstPeak: 0, base: 0, yaws: [], yawAt: 0 });
-  Object.assign(hands, { since: 0, up: false, downSince: 0, rukuSoon: null, lastUpAt: 0 });
+  Object.assign(hands, { since: 0, up: false, downSince: 0, rukuSoon: null, lastUpAt: 0, upFrom: 0 });
   Object.assign(body, { use: null, ref: null, calib: [], calibStart: 0, calibMiss: 0, seen: false, lastSeen: 0, yawAt: 0, lean: 0, peak: 0, leans: [], last: null });
   Object.assign(autoEye, { cand: null, since: 0, faceAt: 0 });
   app.waitFrom = 0; app.waitHome = null;
+  Object.assign(wb, { ref: null, since: 0, hist: [], cur: null, last: null });
   rec.reset();
 }
 
@@ -379,6 +380,7 @@ function onObservation(w, yaw, t, handsUp = false, pos = null, shoulders = null,
   const raiseBy = body.use ? "body" : handsUp && armsUp ? "hands+arms" : handsUp ? "hands" : "arms";
   if (body.use) handsUp = !!(b && b.raised);
   else if (armsUp) handsUp = true;
+  if (handsUp && !(t - hands.lastUpAt <= 400)) hands.upFrom = t; // (v31: when the hands last went up)
   if (handsUp) hands.lastUpAt = t;
   const turn = body.use ? (b ? b.yaw : null) : body.use === false && w != null ? yaw : null; // (b.yaw: null without the head)
   if (turn != null) {
@@ -391,6 +393,7 @@ function onObservation(w, yaw, t, handsUp = false, pos = null, shoulders = null,
   trackShoulders(shoulders, t);
   if (app.mode === "calib") return body.use ? bodyCalibStep(b, t) : body.use === false ? calibStep(w, t) : bodyWaitMsg();
   // (automatic, watched by the face: nothing is learned before the start, so any raise is the takbeer)
+  if (waiting) waitWatch(w, t); // (v31: a ruku and a sujood while waiting = the takbeer was missed)
   if (app.mode === "takbeer") return takbeerStep(handsUp && (waiting && !body.use ? true : uprightNow()), t, w);
   if (app.mode !== "pray") return;
 
@@ -681,7 +684,12 @@ function bowStep(w, t) {
       det.pose = want; det.cand = null;
       if (want === "near") {
         const raisedSince = bow && obs.raises.some((r) => r.t >= bow.e - 200); // a raise proves the rise was real
-        if (bow && bow.e != null && !bow.virtual && !bow.ignored && !raisedSince && moveStart - bow.e < MIN_RISE_MS) {
+        // (v31) so do both hands raised while coming up from it, even while the face still looked close
+        // (9 Nov, Maghrib: up from the ruku with the hands raised, the face up for only 0.2 s, then the
+        // sujood: the ruku and the sujood were joined into one bow)
+        // (hands that went up inside the bow: not those of the takbeer before it, still up as it began)
+        const handsRose = bow && bow.e != null && hands.upFrom >= bow.s + 300 && hands.lastUpAt >= bow.e - 1500;
+        if (bow && bow.e != null && !bow.virtual && !bow.ignored && !raisedSince && !handsRose && moveStart - bow.e < MIN_RISE_MS) {
           // the rise before was too short to be real (a flicker): the bow before goes on
           bow.e = null; bow.short = false;
           det.peak = Math.max(det.peak, det.lastSize);
@@ -1189,6 +1197,67 @@ function takbeerMsg() {
   else if (isAuto() && !body.use) msg.textContent = det.seen ? "كبّر وابدأ الصلاة، قاعد أو واقف. العدّ بيبدأ لوحده." : "مش شايف وشك. لو قمت وقفت، العدّ بيبدأ لوحده.";
   else msg.textContent = "ارفع إيدك وكبّر تكبيرة الإحرام";
 }
+// (v31) The takbeer not seen (9 Nov, Dhuhr: the counting began only in the second rak'ah and stayed a
+// rak'ah behind to the end; the hand tool was likely still loading). Automatic, watched by the face:
+// while waiting, a bow, a rise, and a second bow (a ruku, then a sujood) mean the prayer has begun. It
+// starts then, with both bows counted. Bows are measured from the smallest steady face seen (upright).
+const WAIT_BOW_MS = 900;       // a bow while waiting: at least this long (and at most WAIT_BOW_MAX_MS)
+const WAIT_BOW_MAX_MS = 8000;
+const WAIT_RISE_MS = 6000;     // the second bow within this long of the first one's end
+const WAIT_SETTLED_MS = 1500;  // the upright face known this long before the first bow
+const wb = { ref: null, since: 0, hist: [], cur: null, last: null };
+function waitWatch(w, t) {
+  if (!isAuto() || body.use || settings.place === "lap") return;
+  if (w == null) return; // (a face gone in a bow keeps the bow as it is: a sujood out of the picture)
+  const p = det.raw, ema = det.ema;
+  wb.hist.push([t, ema, p.cy, p.h]);
+  while (wb.hist.length && t - wb.hist[0][0] > 1000) wb.hist.shift();
+  const inBow = wb.cur && wb.cur.e == null;
+  if (!inBow && wb.hist.length >= 4 && t - wb.hist[0][0] >= 700) {
+    const ws = wb.hist.map((x) => x[1]), m = ws.reduce((a, b) => a + b) / ws.length;
+    const mean = (k) => wb.hist.reduce((a, x) => a + x[k], 0) / wb.hist.length;
+    if (Math.max(...ws) - Math.min(...ws) < 0.08 * m) { // steady
+      const r = wb.ref;
+      if (!r || m < r.w) { wb.ref = { w: m, cy: mean(2), h: mean(3), pos: { ...det.pos } }; if (!wb.since) wb.since = t; }
+      else if (m < r.w * 1.08) wb.ref = { w: r.w * 0.95 + m * 0.05, cy: r.cy * 0.95 + mean(2) * 0.05, h: r.h * 0.95 + mean(3) * 0.05, pos: r.pos };
+    }
+  }
+  const r = wb.ref;
+  if (!r) return;
+  const lean = Math.max(0, (ema / r.w - 1) / (settings.sens - 1)) + Math.max(0, (p.cy - r.cy) / r.h) / DOWN_FACES;
+  if (!wb.cur || wb.cur.e != null) {
+    if (lean >= 1) wb.cur = { s: t, e: null, upSince: 0 };
+    return;
+  }
+  const b = wb.cur;
+  if (lean >= 1) b.upSince = 0;
+  else if (lean < 0.5) {
+    if (!b.upSince) b.upSince = t;
+    else if (t - b.upSince >= 300) {
+      b.e = b.upSince;
+      const len = b.e - b.s;
+      if (len >= WAIT_BOW_MS && len <= WAIT_BOW_MAX_MS && b.s - wb.since >= WAIT_SETTLED_MS) wb.last = b;
+      else if (len > WAIT_BOW_MAX_MS) wb.last = null;
+      return;
+    }
+  }
+  const a = wb.last;
+  if (a && b !== a && t - b.s >= WAIT_BOW_MS && b.s - a.e <= WAIT_RISE_MS && b.s - a.e >= 200) lateStart(a, b, t);
+}
+function lateStart(a, b, t) {
+  const r = wb.ref;
+  startPrayer(Math.max(app.waitFrom || 0, wb.since, a.s - 9000));
+  if (app.mode !== "pray") return;
+  det.valley = r.w; det.prevValley = r.w; det.home = { ...r.pos }; det.prevHome = { ...r.pos }; det.upY = r.pos.cy;
+  det.relearn = 0;
+  det.pose = "near"; det.cand = null; det.nearBy = "face";
+  det.peak = det.ema; det.lastSize = det.ema; det.low = det.pos ? { ...det.pos } : null; det.still = null;
+  det.score = leanScore(det.ema);
+  obs.bows.push({ s: a.s, e: a.e, virtual: true }, { s: b.s, e: null, lostLowMs: 0, lostSince: 0, byShoulders: false, shPeak: 0 });
+  rec.event(t, `takbeer not seen: started by two bows while waiting (${((a.e - a.s) / 1000).toFixed(1)}s, up ${((b.s - a.e) / 1000).toFixed(1)}s, then this one)`);
+  realign(t);
+}
+
 function takbeerStep(up, t, w) {
   const mixed = settings.posture === "mixed";
   // standing up starts the clock too: "first rak'ah standing", and the automatic mode watched by the
@@ -1479,7 +1548,7 @@ async function loadHands(files) {
       numHands: 2,
       minHandDetectionConfidence: 0.4,
     }), 60000);
-    diag.hands = "ready";
+    diag.hands = "ready"; diag.handsAt = Date.now();
   } catch (e) {
     handDetector = null;
     diag.hands = "off";
@@ -1499,7 +1568,7 @@ async function loadPose(files) {
       minPosePresenceConfidence: 0.4,
       minTrackingConfidence: 0.4,
     }), 60000);
-    diag.pose = "ready";
+    diag.pose = "ready"; diag.poseAt = Date.now();
   } catch (e) {
     poseDetector = null;
     diag.pose = "off";
@@ -1997,6 +2066,9 @@ function startPrayer(t, away = false, byButton = false) {
   }
   rec.start(t);
   rec.event(t, `start ${app.key} ${settings.posture}/${settings.place} sens ${settings.sens} hands ${diag.hands} body ${diag.pose}${body.use ? " (watched by the body)" : ""}`);
+  // (v31) how long it waited for the takbeer, and when the hand and body tools became ready in that wait
+  const w0 = app.waitFrom, sec = (ms) => `${(ms / 1000).toFixed(1)}s`;
+  if (w0 && !SIM) rec.event(t, `waited ${sec(now() - w0)}${diag.handsAt > w0 ? `; hands ready after ${sec(diag.handsAt - w0)}` : ""}${diag.poseAt > w0 ? `; body ready after ${sec(diag.poseAt - w0)}` : ""}`);
   if (away) rec.event(t, "stood up");
   $("pName").textContent = `صلاة ${p.name}`;
   // keep the video on screen (small), so the phone does not pause a hidden camera
