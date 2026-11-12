@@ -20,12 +20,12 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 31;
+const APP_VERSION = 32;
 
-import { buildSteps, alignPrayer, timeline, COST } from "./align.js?v=57";
-import { prayerTimes } from "./prayertimes.js?v=57";
-import { qiblaBearing, facing, turnBy } from "./qibla.js?v=57";
-import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=57";
+import { buildSteps, alignPrayer, timeline, COST } from "./align.js?v=58";
+import { prayerTimes } from "./prayertimes.js?v=58";
+import { qiblaBearing, facing, turnBy } from "./qibla.js?v=58";
+import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=58";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -727,8 +727,10 @@ function bowStep(w, t) {
           det.refresh = !det.seen && det.farBy === "shoulders";
           if (sh.seen) sh.home = { sy: sh.sy, sw: sh.sw };
           if (open && open.e == null) open.e = moveStart;
-          // a real bow (long enough) that the shoulders, seen all along, did not follow: they cannot tell here
-          if (open && !open.virtual && open.shSeen && (open.shPeak || 0) < TAKBEER_SH && moveStart - open.s >= MIN_BOW_MS && !sh.flat) { sh.flat = true; rec.event(t, "shoulders flat"); }
+          // a bow (long enough) that the shoulders, seen all along, did not follow: if the matching counts
+          // it as a part of the prayer, they cannot tell here (see realign; v32: not for a bow left out as
+          // extra - 12 Nov, hands over the face for a moment made one and the shoulders were not trusted after)
+          if (open && !open.virtual && open.shSeen && (open.shPeak || 0) < TAKBEER_SH && moveStart - open.s >= MIN_BOW_MS) open.flatSh = true;
           rec.event(t, det.farBy === "shoulders" ? "far (shoulders)" : det.farBy === "back" ? "far (back up)" : "far");
         }
       }
@@ -1066,7 +1068,10 @@ function realign(t, final = false) {
   const standing = settings.posture === "stand" || (auto && body.use) ? app.n : mixed && !stand.used ? 1 : 0;
   // (v28) has every ruku of this prayer so far come after a raise (two at least)? Then a "ruku" without
   // one is doubtful (align.js noRaiseRuku). In October the raises were often not seen: then nothing changes.
-  const rk = app.match ? app.match.pairs.filter((p) => p.j % 3 === 0).map((p) => app.match.bows[p.a]) : [];
+  // (v32: not the newest bow, which is the one being judged: 12 Nov, a ruku whose raise was too quick to
+  // see made the rule fall away, and a lean before it was shown as the ruku for 2 s)
+  const newest = obs.bows.filter((b) => !b.short && !b.ignored).at(-1);
+  const rk = app.match ? app.match.pairs.filter((p) => p.j % 3 === 0).map((p) => app.match.bows[p.a]).filter((b) => b !== newest) : [];
   const rukuRaises = rk.length >= 2 && rk.every((b) => b.virtual || obs.raises.some((r) => r.t >= b.s - COST.takbeerMs && r.t <= b.s + 300));
   const res = alignPrayer({
     n: app.n, bows: obs.bows.filter((b) => !b.short), raises: obs.raises, sits: obs.sits, mixed, standing, // (not a twitch waiting to be joined)
@@ -1077,6 +1082,7 @@ function realign(t, final = false) {
   app.ptr = tl.ptr;
   app.starts = tl.starts;
   app.match = res;
+  if (!sh.flat && !final && res.pairs.some((p) => res.bows[p.a].flatSh)) { sh.flat = true; rec.event(t, "shoulders flat"); }
   const cur = app.steps[app.ptr];
   if (moved) {
     rec.event(t, `step ${app.ptr}`);

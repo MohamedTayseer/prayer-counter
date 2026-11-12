@@ -4,6 +4,14 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v32 — a moment with the hands over the face is not a bow
+- A short lean that the matching leaves out as not part of the prayer (for
+  example the hands over the face for a moment) no longer makes the app stop
+  trusting the shoulders for the rest of the prayer.
+- A ruku whose raise was too quick to see no longer makes the app forget that
+  every ruku comes after a raise. Before, a lean a little earlier could be shown
+  as the ruku for about 2 s before the screen put itself right.
+
 ## v31 — the start not missed, and a quick rise kept
 - If the takbeer at the start is not seen, the prayer still starts: while
   waiting, a ruku and then a sujood mean the prayer has begun, and both are
