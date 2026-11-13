@@ -4,6 +4,13 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v33 — a shallow sujood is counted
+- When the face and the shoulders both go a good part of the way down
+  together and stay there for a second, that is a bow, even if neither of
+  them goes all the way. Before, a shallow sujood like that was missed, and
+  the screen stayed on the step before for about 13 s until the next raise
+  put it right.
+
 ## v32 — a moment with the hands over the face is not a bow
 - A short lean that the matching leaves out as not part of the prayer (for
   example the hands over the face for a moment) no longer makes the app stop

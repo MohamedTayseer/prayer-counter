@@ -20,12 +20,12 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 32;
+const APP_VERSION = 33;
 
-import { buildSteps, alignPrayer, timeline, COST } from "./align.js?v=58";
-import { prayerTimes } from "./prayertimes.js?v=58";
-import { qiblaBearing, facing, turnBy } from "./qibla.js?v=58";
-import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=58";
+import { buildSteps, alignPrayer, timeline, COST } from "./align.js?v=59";
+import { prayerTimes } from "./prayertimes.js?v=59";
+import { qiblaBearing, facing, turnBy } from "./qibla.js?v=59";
+import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=59";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -117,6 +117,10 @@ const AWAY_BOW_MAX_MS = 3000;
 // upright is doubtful (a takbeer's face, a hand at the face): it counts only after this long. When the
 // shoulders go down with the face - every real ruku and sujood of 6-7 Nov - it counts at once.
 const NEAR_DOUBT_MS = 1000;
+// (v33) A shallow bow: the face and the shoulders both this far into a lean at once, for NEAR_DOUBT_MS, is a
+// bow even though neither reached a whole one (13 Nov, Dhuhr: a 2nd sujood with the face at 0.8-1.0 and the
+// shoulders at 0.8 for 2 s was not counted; in all the records before, nothing else ever came near this)
+const BOTH_NEAR = 0.7;
 const MIN_RISE_MS = 800;     // a rise shorter than this between two bows is a twitch too (a real one measures 1 s+)
 const FRAME_MS = 66;         // look at the camera about 15 times a second
 // "first rak'ah standing" (phone set for sitting)
@@ -224,7 +228,8 @@ const det = {
   upY: null, prevUpY: null,       // highest face place while upright (this pause / the one before the bow)
   seat: null,                     // where and how big the face is sitting upright (learned at the start)
   raw: null,                      // the face place last seen, not smoothed
-  nearBy: "face",                 // what showed the bow coming: the face or the shoulders
+  nearBy: "face",                 // what showed the bow coming: the face or the shoulders (or both: BOTH_NEAR)
+  bothSince: 0,                   // the face and the shoulders both well into a lean since (BOTH_NEAR)
   farAt: 0,                       // when the last bow ended
   farBy: "face",                  // what showed it ending
   refresh: false,                 // learn the upright face afresh when it shows again
@@ -264,7 +269,7 @@ function resetTracking() {
     ema: 0, pose: "far", cand: null, candSince: 0, valley: 0, peak: 0, pos: null, home: null, low: null, score: 0,
     lastSeen: 0, lastSize: 0, lastYaw: 0, yawHist: [], seen: false, calib: [], calibStart: 0,
     prevValley: 0, prevHome: null, still: null, upY: null, prevUpY: null, seat: null, raw: null,
-    nearBy: "face", farAt: 0, farBy: "face", refresh: false, upSince: 0, cyHist: [], relearn: 0, relearnStill: null,
+    nearBy: "face", bothSince: 0, farAt: 0, farBy: "face", refresh: false, upSince: 0, cyHist: [], relearn: 0, relearnStill: null,
   });
   obs.bows = []; obs.raises = []; obs.sits = [];
   Object.assign(stand, { on: false, used: false, visit: null, ruku: null, still: null });
@@ -576,6 +581,7 @@ function bowStep(w, t) {
   if (det.pose === "near" && bow && bow.e == null && shOn) { bow.shPeak = Math.max(bow.shPeak || 0, sh.score); bow.shSeen = true; }
   const shShowed = (bow?.shPeak || 0) >= 1;
   let want = det.pose;
+  if (w == null || det.pose !== "far") det.bothSince = 0; // (see BOTH_NEAR: only while upright, face seen)
   if (w != null) {
     const size = det.ema;
     det.lastSize = size;
@@ -588,6 +594,8 @@ function bowStep(w, t) {
     }
     if (det.pose === "far") {
       det.score = leanScore(size);
+      const both = shOn && det.score >= BOTH_NEAR && sh.score >= BOTH_NEAR && !turnedAway();
+      det.bothSince = !both ? 0 : det.bothSince || t;
       // keep the smallest upright size; follow very slowly if the person settles closer
       det.valley = size < det.valley ? size : det.valley + (size - det.valley) * 0.002;
       det.upY = det.upY == null ? det.pos.cy : Math.min(det.upY, det.pos.cy);
@@ -605,6 +613,10 @@ function bowStep(w, t) {
       if (!det.relearn && (!visit || visit.seatAt > 0 || deep(size))) {
         if (det.score >= need && !takbeerFace(t) && !turnedAway()) { want = "near"; det.nearBy = "face"; }
         else if (shOn && sh.score >= need) { want = "near"; det.nearBy = "shoulders"; }
+        else if (det.bothSince && t - det.bothSince >= NEAR_DOUBT_MS) {
+          want = "near"; det.nearBy = "both";
+          if (det.cand !== "near") { det.cand = "near"; det.candSince = det.bothSince; } // (it began then)
+        }
       }
     } else {
       det.peak = Math.max(det.peak, size);
@@ -702,7 +714,7 @@ function bowStep(w, t) {
           det.still = null; det.prevUpY = det.upY;
           const byShoulders = det.nearBy === "shoulders";
           obs.bows.push({ s: moveStart, e: null, lostLowMs: 0, lostSince: 0, byShoulders, shPeak: shOn ? sh.score : 0 });
-          rec.event(t, byShoulders ? "near (shoulders)" : "near");
+          rec.event(t, byShoulders ? "near (shoulders)" : det.nearBy === "both" ? "near (face+shoulders)" : "near");
           if (stand.visit) sitConfirmed(t, false); // settled on the chair, then bowed
         }
       } else {
