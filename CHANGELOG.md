@@ -4,6 +4,14 @@ Each version is saved in git with a name (v1, v2, ...). To go back to an earlier
 version, ask for it by name, for example "go back to v4". The app shows its
 version number at the bottom of the start screen.
 
+## v34 — a quick rise from ruku with the hands raised
+- Coming up from ruku with both hands raised now ends the ruku even when the
+  rise is quick and the face still looks a little close, as long as the
+  shoulders came most of the way back up. Before, a quick rise like that was
+  missed: the ruku and the first sujood were taken as one bow, and the screen
+  stayed one step behind for about 20 s.
+- The rise from ruku now shows on the screen a little sooner in other prayers too.
+
 ## v33 — a shallow sujood is counted
 - When the face and the shoulders both go a good part of the way down
   together and stay there for a second, that is a bow, even if neither of

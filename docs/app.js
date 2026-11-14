@@ -20,12 +20,12 @@
 // person really sits down. A small face with the whole body in the picture = the body tool.
 
 // Version of this app (shown on the start screen; see CHANGELOG.md).
-const APP_VERSION = 33;
+const APP_VERSION = 34;
 
-import { buildSteps, alignPrayer, timeline, COST } from "./align.js?v=59";
-import { prayerTimes } from "./prayertimes.js?v=59";
-import { qiblaBearing, facing, turnBy } from "./qibla.js?v=59";
-import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=59";
+import { buildSteps, alignPrayer, timeline, COST } from "./align.js?v=60";
+import { prayerTimes } from "./prayertimes.js?v=60";
+import { qiblaBearing, facing, turnBy } from "./qibla.js?v=60";
+import { dbxConnected, dbxWaiting, dbxConnectUrl, dbxFinishConnect, dbxDisconnect, dbxQueue, dbxFlush, dbxReturn } from "./dropbox.js?v=60";
 
 const MP_VERSION = "0.10.14";
 const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -218,6 +218,7 @@ const RISE_FACES = 0.6;     // moving back up by this many face heights counts a
 const FAR_SCORE = 0.35;     // ...and back this close to the upright size and place (lean score) too
 const BACK_UP_FACES = 0.3;  // sitting back up: the face this close to its upright height (face heights),
 const BACK_UP_SIZE = 0.92;  // ...this much smaller than at the deepest of the bow, the shoulders back up
+const BACK_UP_HANDS_SH = 0.6; // (v34) ...or both hands raised in the bow and the shoulders back to this (see backUpright)
 const det = {
   ema: 0, pose: "far", cand: null, candSince: 0, valley: 0, peak: 0,
   pos: null, home: null, low: null, score: 0,
@@ -303,6 +304,12 @@ function leanScore(size) {
 function backUpright(bow) {
   const p = det.pos, home = det.home;
   if (!p || !home || !bow || bow.e != null || !sh.seen || !sh.home) return false;
+  // (v34) or both hands raised now, gone up inside this bow - the raise of rising from ruku - with the shoulders
+  // nearly back up (14 Nov, Maghrib: up for 0.5 s only, the shoulders under SH_FAR for 0.3 s and the face 5%
+  // short of BACK_UP_SIZE; the ruku and the 1st sujood ran together and the screen was one behind for 21 s)
+  const handsNow = hands.upFrom >= bow.s + 300 && now() - hands.lastUpAt <= 300;
+  // (and back to a fifth of their deepest in it: 8 Nov, shoulders held at 0.6 after a 1.7 "bow" were still in it)
+  if (handsNow && (bow.shPeak || 0) >= 1 && sh.score <= Math.min(BACK_UP_HANDS_SH, bow.shPeak / 5) && p.cy <= home.cy + BACK_UP_FACES * home.h) return true;
   return (bow.shPeak || 0) >= 1 && sh.score <= SH_FAR && p.cy <= home.cy + BACK_UP_FACES * home.h && det.lastSize <= det.peak * BACK_UP_SIZE;
 }
 
